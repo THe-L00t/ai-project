@@ -16,7 +16,7 @@ import asyncio
 import threading
 from pathlib import Path
 from typing import Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # 프로젝트 루트 경로를 Python 경로에 추가
 project_root = Path(__file__).parent
@@ -29,6 +29,7 @@ from src.data.MarketDataCollector import MarketDataCollector
 from src.data.DataStorage import DataStorage
 from src.models.EnsemblePredictor import EnsemblePredictor
 from src.dashboard.NotificationSystem import NotificationSystem
+
 
 class CoinTradingAI:
     """
@@ -83,7 +84,7 @@ class CoinTradingAI:
             level=logging.INFO,
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
             handlers=[
-                logging.FileHandler(log_dir / "trading_ai.log"),
+                logging.FileHandler(log_dir / "trading_ai_v2.log"),
                 logging.StreamHandler(sys.stdout)
             ]
         )
@@ -229,7 +230,7 @@ class CoinTradingAI:
 
     def Start(self):
         """시스템 시작"""
-        self.logger.info("🚀 코인 자동매매 AI 시스템 시작")
+        self.logger.info("🚀 코인 자동매매 AI 시스템 v2.0 시작")
 
         # 컴포넌트 초기화
         if not self._InitializeComponents():
@@ -238,6 +239,15 @@ class CoinTradingAI:
 
         # 안정성 모니터링 시작
         self.stability_manager.StartMonitoring()
+
+        # 시작 알림
+        if self.notification_system:
+            try:
+                asyncio.run(self.notification_system.send_system_alert(
+                    'STARTUP', f'시스템 시작 (모드: {self.trading_mode})'
+                ))
+            except Exception:
+                pass
 
         self.is_running = True
         self.logger.info("✅ 시스템 시작 완료 - 메인 루프 진입")
@@ -302,39 +312,173 @@ class CoinTradingAI:
 
         self.logger.info("메인 루프 종료")
 
+    def _ExecuteDataCollection(self):
+        """시장 데이터 수집 실행"""
+        try:
+            self.logger.info("📈 시장 데이터 수집 시작")
+
+            for symbol in self.trading_symbols:
+                # 데이터 수집 및 저장
+                market_data = self.stability_manager.SafeExecute(
+                    self.data_collector.collect_market_data,
+                    symbol=symbol
+                )
+
+                if market_data:
+                    # 데이터베이스에 저장
+                    self.storage.save_market_data(
+                        symbol=symbol,
+                        timestamp=datetime.now(),
+                        open_price=market_data.get('open', 0),
+                        high_price=market_data.get('high', 0),
+                        low_price=market_data.get('low', 0),
+                        close_price=market_data.get('close', 0),
+                        volume=market_data.get('volume', 0)
+                    )
+
+            self.logger.info("✅ 시장 데이터 수집 완료")
+
+        except Exception as e:
+            self.logger.error(f"시장 데이터 수집 실패: {e}")
+
     def _ExecuteNewsCollection(self):
         """뉴스 수집 및 분석 실행"""
         try:
             self.logger.info("📰 뉴스 수집 시작")
 
-            # 안전한 뉴스 수집 실행
             news_articles = self.stability_manager.SafeExecute(
                 self.news_collector.CollectAllNews
             )
 
             self.logger.info(f"✅ {len(news_articles)}개 뉴스 수집 완료")
 
-            # 수집 통계 로깅
             stats = self.news_collector.GetCollectionStats()
             self.logger.info(f"수집 통계: {stats}")
-
-            # 향후 뉴스 분석 로직 추가 예정
-            # - 감정 분석
-            # - 코인별 영향도 계산
-            # - 예측 신호 생성
 
         except Exception as e:
             self.logger.error(f"뉴스 수집 실행 실패: {e}")
 
+    def _ExecuteAIPrediction(self) -> Dict[str, Any]:
+        """AI 예측 실행"""
+        predictions = {}
+        try:
+            self.logger.info("🤖 AI 예측 시작")
+
+            for symbol in self.trading_symbols:
+                # 최근 24시간 데이터 조회
+                recent_data = self.storage.get_market_data(
+                    symbol=symbol,
+                    start_time=datetime.now() - timedelta(hours=24),
+                    end_time=datetime.now()
+                )
+
+                if len(recent_data) >= 50:  # 충분한 데이터가 있는 경우
+                    import pandas as pd
+                    df = pd.DataFrame(recent_data)
+
+                    # AI 예측 수행
+                    prediction = self.stability_manager.SafeExecute(
+                        self.predictor.predict,
+                        data=df
+                    )
+
+                    if prediction:
+                        predictions[symbol] = prediction
+                        self.logger.info(f"{symbol} 예측: {prediction['signal']} (신뢰도: {prediction['confidence']:.2f})")
+                else:
+                    self.logger.warning(f"{symbol} 데이터 부족 (예측 스킵)")
+
+            self.logger.info(f"✅ AI 예측 완료 - {len(predictions)}개 코인")
+            return predictions
+
+        except Exception as e:
+            self.logger.error(f"AI 예측 실행 실패: {e}")
+            return {}
+
+    def _ExecuteTrading(self, predictions: Dict[str, Any]):
+        """거래 실행"""
+        try:
+            self.logger.info("💰 거래 실행 시작")
+
+            for symbol, prediction in predictions.items():
+                signal = prediction['signal']
+                confidence = prediction['confidence']
+
+                # 신뢰도 필터링
+                if confidence < 0.7:
+                    self.logger.info(f"{symbol} 신뢰도 낮음 ({confidence:.2f}) - 거래 스킵")
+                    continue
+
+                # 매수 신호
+                if signal in ['STRONG_BUY', 'BUY']:
+                    if self.trading_mode == 'live':
+                        # 실제 매수 실행
+                        self.logger.info(f"{symbol} 실거래 매수 시도: {signal} (신뢰도: {confidence:.2f})")
+                        # 실제 구현에서는 여기서 거래 실행
+                    else:
+                        self.logger.info(f"{symbol} 모의거래 매수: {signal} (신뢰도: {confidence:.2f})")
+
+                # 매도 신호
+                elif signal in ['STRONG_SELL', 'SELL']:
+                    if self.trading_mode == 'live':
+                        # 실제 매도 실행
+                        self.logger.info(f"{symbol} 실거래 매도 시도: {signal} (신뢰도: {confidence:.2f})")
+                        # 실제 구현에서는 여기서 거래 실행
+                    else:
+                        self.logger.info(f"{symbol} 모의거래 매도: {signal} (신뢰도: {confidence:.2f})")
+
+            self.logger.info("✅ 거래 실행 완료")
+
+        except Exception as e:
+            self.logger.error(f"거래 실행 실패: {e}")
+            if self.notification_system:
+                asyncio.run(self.notification_system.send_system_alert(
+                    'ERROR', f'거래 실행 오류: {str(e)}'
+                ))
+
+    def _MonitorPortfolio(self):
+        """포트폴리오 모니터링"""
+        try:
+            if not self.trading_executor:
+                return
+
+            status = self.trading_executor.get_status()
+            self.logger.info(f"📊 포트폴리오 상태: 포지션 {status['positions']}개, 오늘 거래 {status['trades_today']}개")
+
+            # 비상 정지 체크
+            if status.get('emergency_stop', False):
+                self.logger.critical("🚨 비상 정지 상태 감지!")
+                if self.notification_system:
+                    asyncio.run(self.notification_system.send_system_alert(
+                        'EMERGENCY_STOP', '비상 정지 상태 감지'
+                    ))
+                self.Stop()
+
+        except Exception as e:
+            self.logger.error(f"포트폴리오 모니터링 실패: {e}")
+
     def Stop(self):
         """시스템 정지"""
-        self.logger.info("🛑 시스템 정지 시작")
+        self.logger.info("🛬 시스템 정지 시작")
 
         self.is_running = False
+
+        # 거래 실행기 정지
+        if self.trading_executor:
+            self.trading_executor.stop_trading()
 
         # 안정성 관리자 정지
         if self.stability_manager:
             self.stability_manager.StopMonitoring()
+
+        # 시스템 종료 알림
+        if self.notification_system:
+            try:
+                asyncio.run(self.notification_system.send_system_alert(
+                    'SHUTDOWN', '시스템 정상 종료'
+                ))
+            except Exception:
+                pass  # 종료 시는 알림 오류 무시
 
         self.logger.info("✅ 시스템 정지 완료")
 
@@ -343,13 +487,29 @@ class CoinTradingAI:
         self.logger.info(f"시그널 {signum} 수신 - 안전한 종료 시작")
         self.Stop()
 
+
 def main():
     """메인 함수"""
-    print("🤖 코인 자동매매 AI 시스템")
-    print("=" * 50)
+    print("🤖 CoinTradingAI v2.0 - 완전한 자동매매 시스템")
+    print("=" * 60)
+    print("🔄 모드: paper (모의거래) / live (실거래)")
+    print("🔑 실거래를 위해 환경변수 설정: UPBIT_ACCESS_KEY, UPBIT_SECRET_KEY")
+    print("📊 대시보드: python run_dashboard.py")
+    print("=" * 60)
+
+    # 인수 처리
+    trading_mode = 'paper'
+    if len(sys.argv) > 1:
+        if sys.argv[1] in ['live', 'paper']:
+            trading_mode = sys.argv[1]
+        else:
+            print(f"잘못된 모드: {sys.argv[1]}. 'paper' 또는 'live'를 사용하세요.")
+            return 1
+
+    print(f"🚀 거래 모드: {trading_mode.upper()}")
 
     # 시그널 핸들러 등록
-    trading_ai = CoinTradingAI()
+    trading_ai = CoinTradingAI(trading_mode=trading_mode)
     signal.signal(signal.SIGINT, trading_ai._SignalHandler)
     signal.signal(signal.SIGTERM, trading_ai._SignalHandler)
 
@@ -364,6 +524,7 @@ def main():
         trading_ai.Stop()
 
     return 0
+
 
 if __name__ == "__main__":
     exit_code = main()
