@@ -85,14 +85,26 @@ class NewsCollector:
         }
 
     async def fetch_feed(self, session, url):
-        """RSS 피드 비동기 수집"""
+        """RSS 피드 비동기 수집 (SSL 문제 해결)"""
         try:
-            async with session.get(url, timeout=10) as response:
-                if response.status == 200:
-                    content = await response.text()
-                    return feedparser.parse(content)
+            # SSL 검증 비활성화
+            connector = aiohttp.TCPConnector(ssl=False)
+            async with aiohttp.ClientSession(connector=connector) as ssl_session:
+                async with ssl_session.get(url, timeout=10) as response:
+                    if response.status == 200:
+                        content = await response.text()
+                        return feedparser.parse(content)
         except Exception as e:
             logger.error(f"피드 수집 실패 ({url}): {e}")
+            # 백업: requests 사용
+            try:
+                import requests
+                requests.packages.urllib3.disable_warnings()
+                response = requests.get(url, timeout=10, verify=False)
+                if response.status_code == 200:
+                    return feedparser.parse(response.content)
+            except:
+                pass
             return None
 
     async def collect_news_async(self, max_articles=200):
@@ -103,7 +115,9 @@ class NewsCollector:
         all_feeds = self.crypto_feeds + self.general_feeds
         articles = []
 
-        async with aiohttp.ClientSession() as session:
+        # SSL 검증 비활성화
+        connector = aiohttp.TCPConnector(ssl=False)
+        async with aiohttp.ClientSession(connector=connector) as session:
             tasks = [self.fetch_feed(session, url) for url in all_feeds]
 
             for i, task in enumerate(asyncio.as_completed(tasks)):
@@ -281,6 +295,19 @@ class NewsSentimentAI:
         self.upbit = UpbitAPI()
         self.news_collector = NewsCollector()
         self.sentiment_analyzer = SentimentAnalyzer()
+
+        # 적응형 학습 시스템 추가
+        try:
+            from adaptive_learning_ai import AdaptiveLearningEngine
+            self.adaptive_learner = AdaptiveLearningEngine()
+            self.adaptive_learner.load_learning_state()
+            self.adaptive_learner.initialize_online_models()
+            self.adaptive_learning_enabled = True
+            logger.info("🧠 적응형 학습 시스템 연동 완료")
+        except Exception as e:
+            logger.warning(f"적응형 학습 시스템 연동 실패: {e}")
+            self.adaptive_learner = None
+            self.adaptive_learning_enabled = False
 
         # 데이터 저장소
         self.news_history = deque(maxlen=1000)
@@ -469,40 +496,169 @@ class NewsSentimentAI:
         logger.info(f"🎯 모델 훈련 완료 ({total_elapsed:.1f}초)")
 
     def predict_price_movement(self, coin, horizon_hours=1):
-        """가격 변동 예측"""
-        if coin not in self.prediction_models:
+        """가격 변동 예측 (적응형 학습 포함)"""
+        predictions = []
+
+        # 1. 기존 뉴스 기반 예측
+        if coin in self.prediction_models:
+            try:
+                features = self.create_prediction_features(coin)
+                if len(features) > 0:
+                    features_scaled = self.scalers[coin].transform(features.reshape(1, -1))
+                    predicted_change = self.prediction_models[coin].predict(features_scaled)[0]
+                    predictions.append({
+                        'source': 'news_model',
+                        'predicted_change': predicted_change,
+                        'confidence': 0.6
+                    })
+            except Exception as e:
+                logger.error(f"{coin} 뉴스 모델 예측 실패: {e}")
+
+        # 2. 적응형 학습 예측
+        if self.adaptive_learning_enabled and self.adaptive_learner:
+            try:
+                adaptive_prediction = self.adaptive_learner.get_enhanced_prediction(coin)
+                if adaptive_prediction:
+                    predictions.append({
+                        'source': 'adaptive_model',
+                        'predicted_change': adaptive_prediction['predicted_change_pct'],
+                        'confidence': adaptive_prediction['confidence']
+                    })
+            except Exception as e:
+                logger.error(f"{coin} 적응형 모델 예측 실패: {e}")
+
+        if not predictions:
             return None
 
+        # 3. 앙상블 예측 (가중 평균)
+        total_weight = sum(p['confidence'] for p in predictions)
+        if total_weight == 0:
+            return None
+
+        ensemble_prediction = sum(p['predicted_change'] * p['confidence'] for p in predictions) / total_weight
+        ensemble_confidence = min(total_weight / len(predictions), 1.0)
+
+        # 현재 가격 정보
+        ticker = self.upbit.GetTicker([f'KRW-{coin}'])
+        if not ticker:
+            return None
+
+        current_price = ticker[0].trade_price
+        predicted_price = current_price * (1 + ensemble_prediction / 100)
+
+        prediction_result = {
+            'coin': coin,
+            'current_price': current_price,
+            'predicted_change_pct': ensemble_prediction,
+            'predicted_price': predicted_price,
+            'horizon_hours': horizon_hours,
+            'timestamp': datetime.now(),
+            'confidence': ensemble_confidence,
+            'ensemble_details': predictions,
+            'adaptive_learning': self.adaptive_learning_enabled
+        }
+
+        # 적응형 학습에 예측 기록 (나중에 검증용)
+        if self.adaptive_learning_enabled:
+            self.record_prediction_for_later_verification(coin, ensemble_prediction, ensemble_confidence)
+
+        return prediction_result
+
+    def record_prediction_for_later_verification(self, coin, predicted_change, confidence):
+        """예측을 나중에 검증하기 위해 기록"""
+        if not hasattr(self, 'pending_predictions'):
+            self.pending_predictions = deque(maxlen=1000)
+
+        self.pending_predictions.append({
+            'coin': coin,
+            'predicted_change': predicted_change,
+            'confidence': confidence,
+            'prediction_time': datetime.now(),
+            'current_price': self.upbit.GetTicker([f'KRW-{coin}'])[0].trade_price if self.upbit.GetTicker([f'KRW-{coin}']) else 0
+        })
+
+    def verify_and_learn_from_predictions(self):
+        """예측 검증 및 학습"""
+        if not hasattr(self, 'pending_predictions') or not self.adaptive_learning_enabled:
+            return
+
+        verified_count = 0
+        for prediction in list(self.pending_predictions):
+            # 30분 후 검증
+            time_elapsed = (datetime.now() - prediction['prediction_time']).total_seconds()
+            if time_elapsed >= 1800:  # 30분
+                coin = prediction['coin']
+                try:
+                    current_ticker = self.upbit.GetTicker([f'KRW-{coin}'])
+                    if current_ticker:
+                        current_price = current_ticker[0].trade_price
+                        actual_change = (current_price - prediction['current_price']) / prediction['current_price'] * 100
+
+                        # 적응형 학습에 피드백
+                        self.adaptive_learner.learn_from_prediction_feedback(
+                            coin,
+                            prediction['predicted_change'],
+                            actual_change,
+                            prediction['confidence']
+                        )
+
+                        verified_count += 1
+
+                    # 검증된 예측 제거
+                    self.pending_predictions.remove(prediction)
+
+                except Exception as e:
+                    logger.error(f"예측 검증 실패 ({coin}): {e}")
+
+        if verified_count > 0:
+            logger.info(f"🎯 {verified_count}개 예측 검증 및 학습 완료")
+
+    def execute_trade_with_learning(self, coin, signal, price, quantity=None):
+        """학습 기능이 포함된 거래 실행"""
         try:
-            features = self.create_prediction_features(coin)
-            if len(features) == 0:
-                return None
+            # 거래 실행 (기존 로직)
+            trade_executed = False
+            if signal == 'BUY':
+                logger.info(f"💰 매수 신호 실행: {coin} @ {price:,}원")
+                trade_executed = True
+            elif signal == 'SELL':
+                logger.info(f"💰 매도 신호 실행: {coin} @ {price:,}원")
+                trade_executed = True
 
-            # 예측
-            features_scaled = self.scalers[coin].transform(features.reshape(1, -1))
-            predicted_change = self.prediction_models[coin].predict(features_scaled)[0]
+            # 적응형 학습에 거래 기록
+            if trade_executed and self.adaptive_learning_enabled:
+                self.adaptive_learner.experience_collector.record_trade(
+                    coin=coin,
+                    action=signal,
+                    price=price,
+                    quantity=quantity or 0
+                )
 
-            # 현재 가격 정보
-            ticker = self.upbit.GetTicker([f'KRW-{coin}'])
-            if not ticker:
-                return None
-
-            current_price = ticker[0].trade_price
-            predicted_price = current_price * (1 + predicted_change / 100)
-
-            return {
-                'coin': coin,
-                'current_price': current_price,
-                'predicted_change_pct': predicted_change,
-                'predicted_price': predicted_price,
-                'horizon_hours': horizon_hours,
-                'timestamp': datetime.now(),
-                'confidence': min(abs(predicted_change) / 10, 1.0)  # 신뢰도
-            }
+            return trade_executed
 
         except Exception as e:
-            logger.error(f"{coin} 예측 실패: {e}")
-            return None
+            logger.error(f"거래 실행 실패: {e}")
+            return False
+
+    def continuous_learning_update(self):
+        """지속적 학습 업데이트"""
+        if not self.adaptive_learning_enabled:
+            return
+
+        try:
+            # 예측 검증
+            self.verify_and_learn_from_predictions()
+
+            # 지속적 학습 사이클
+            self.adaptive_learner.continuous_learning_cycle()
+
+            # 학습 상태 저장
+            self.adaptive_learner.save_learning_state()
+
+            logger.info("🔄 지속적 학습 업데이트 완료")
+
+        except Exception as e:
+            logger.error(f"지속적 학습 업데이트 실패: {e}")
 
     def generate_trading_signals(self):
         """거래 신호 생성"""
@@ -641,11 +797,17 @@ class NewsSentimentAI:
                 # 2. 거래 신호 생성
                 signals = self.generate_trading_signals()
 
-                # 3. 거래 실행 (여기서는 로그만)
+                # 3. 거래 실행 (학습 포함)
                 for coin, signal in signals.items():
                     if signal != 'HOLD':
-                        logger.info(f"🎯 거래 신호: {coin} -> {signal}")
-                        # 실제 거래 로직은 기존 trader와 연동
+                        ticker = self.upbit.GetTicker([f'KRW-{coin}'])
+                        if ticker:
+                            current_price = ticker[0].trade_price
+                            self.execute_trade_with_learning(coin, signal, current_price)
+
+                # 4. 지속적 학습 업데이트 (5분마다)
+                if cycle_count % 3 == 0:  # 15분마다 (3사이클 * 5분)
+                    self.continuous_learning_update()
 
                 # 10분 대기
                 logger.info("⏱️ 10분 대기...")
