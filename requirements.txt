@@ -37,8 +37,10 @@ prometheus-client>=0.17.0
 
 # 웹 프레임워크 (대시보드용)
 flask>=2.3.0
+flask-socketio>=5.3.0
 dash>=2.14.0
 plotly>=5.15.0
+eventlet>=0.33.0
 
 # 뉴스 및 텍스트 분석
 feedparser>=6.0.10  # RSS 뉴스 피드

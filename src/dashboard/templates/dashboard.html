@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CoinTradingAI - 실시간 모니터링 대시보드</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.socket.io/4.5.0/socket.io.min.js"></script>
+    <style>
+        .status-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .metric-card {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+            transition: transform 0.2s;
+        }
+
+        .metric-card:hover {
+            transform: translateY(-5px);
+        }
+
+        .profit-positive {
+            color: #28a745;
+            font-weight: bold;
+        }
+
+        .profit-negative {
+            color: #dc3545;
+            font-weight: bold;
+        }
+
+        .status-running {
+            background: linear-gradient(135deg, #28a745, #20c997);
+        }
+
+        .status-stopped {
+            background: linear-gradient(135deg, #dc3545, #fd7e14);
+        }
+
+        .position-table {
+            background: white;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .table th {
+            background-color: #f8f9fa;
+            border: none;
+            font-weight: 600;
+        }
+
+        .btn-emergency {
+            background: linear-gradient(135deg, #dc3545, #c82333);
+            border: none;
+            color: white;
+            font-weight: bold;
+        }
+
+        .btn-start {
+            background: linear-gradient(135deg, #28a745, #20c997);
+            border: none;
+            color: white;
+            font-weight: bold;
+        }
+
+        .btn-stop {
+            background: linear-gradient(135deg, #ffc107, #fd7e14);
+            border: none;
+            color: white;
+            font-weight: bold;
+        }
+
+        .chart-container {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+<body style="background-color: #f8f9fa;">
+
+<div class="container-fluid">
+    <!-- 헤더 -->
+    <div class="row">
+        <div class="col-12">
+            <div class="d-flex justify-content-between align-items-center py-3">
+                <h1 class="h3 mb-0">
+                    <i class="fas fa-robot text-primary"></i>
+                    CoinTradingAI Dashboard
+                </h1>
+                <div class="text-muted">
+                    <i class="fas fa-clock"></i>
+                    <span id="current-time"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 상태 및 컨트롤 -->
+    <div class="row">
+        <div class="col-md-8">
+            <div class="status-card" id="status-card">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h5><i class="fas fa-heartbeat"></i> 시스템 상태</h5>
+                        <h3 id="system-status">중지됨</h3>
+                        <p class="mb-0">마지막 업데이트: <span id="last-update">-</span></p>
+                    </div>
+                    <div class="col-md-6">
+                        <h5><i class="fas fa-wallet"></i> 총 자산</h5>
+                        <h3 id="total-balance">0 원</h3>
+                        <p class="mb-0">오늘 수익: <span id="daily-pnl">0 원</span></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="metric-card text-center">
+                <h6>거래 제어</h6>
+                <div class="d-grid gap-2">
+                    <button class="btn btn-start" id="start-btn" onclick="showApiKeyModal()">
+                        <i class="fas fa-play"></i> 거래 시작
+                    </button>
+                    <button class="btn btn-stop" id="stop-btn" onclick="stopTrading()">
+                        <i class="fas fa-stop"></i> 거래 중지
+                    </button>
+                    <button class="btn btn-emergency" id="emergency-btn" onclick="emergencyStop()">
+                        <i class="fas fa-exclamation-triangle"></i> 비상 정지
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 메트릭 카드들 -->
+    <div class="row">
+        <div class="col-lg-3 col-md-6">
+            <div class="metric-card text-center">
+                <i class="fas fa-chart-line fa-2x text-success mb-2"></i>
+                <h6>활성 포지션</h6>
+                <h4 id="active-positions">0</h4>
+            </div>
+        </div>
+        <div class="col-lg-3 col-md-6">
+            <div class="metric-card text-center">
+                <i class="fas fa-exchange-alt fa-2x text-info mb-2"></i>
+                <h6>오늘 거래수</h6>
+                <h4 id="trades-today">0</h4>
+            </div>
+        </div>
+        <div class="col-lg-3 col-md-6">
+            <div class="metric-card text-center">
+                <i class="fas fa-shield-alt fa-2x text-warning mb-2"></i>
+                <h6>리스크 레벨</h6>
+                <h4 id="risk-level">LOW</h4>
+            </div>
+        </div>
+        <div class="col-lg-3 col-md-6">
+            <div class="metric-card text-center">
+                <i class="fas fa-percentage fa-2x text-primary mb-2"></i>
+                <h6>일일 수익률</h6>
+                <h4 id="daily-return">0.00%</h4>
+            </div>
+        </div>
+    </div>
+
+    <!-- 차트 및 테이블 -->
+    <div class="row">
+        <div class="col-md-6">
+            <div class="chart-container">
+                <h5><i class="fas fa-chart-area"></i> 자산 추이</h5>
+                <canvas id="balanceChart" width="400" height="200"></canvas>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="chart-container">
+                <h5><i class="fas fa-coins"></i> 실시간 가격</h5>
+                <div id="price-list"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 포지션 테이블 -->
+    <div class="row">
+        <div class="col-12">
+            <div class="position-table">
+                <div class="p-3">
+                    <h5><i class="fas fa-briefcase"></i> 현재 포지션</h5>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>코인</th>
+                                <th>진입가</th>
+                                <th>현재가</th>
+                                <th>수량</th>
+                                <th>손익</th>
+                                <th>손익률</th>
+                                <th>보유시간</th>
+                                <th>스탑로스</th>
+                                <th>익절가</th>
+                            </tr>
+                        </thead>
+                        <tbody id="positions-table">
+                            <tr>
+                                <td colspan="9" class="text-center text-muted">포지션이 없습니다</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 거래 내역 -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="position-table">
+                <div class="p-3">
+                    <h5><i class="fas fa-history"></i> 최근 거래 내역</h5>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>시간</th>
+                                <th>코인</th>
+                                <th>유형</th>
+                                <th>진입가</th>
+                                <th>청산가</th>
+                                <th>수익률</th>
+                                <th>신호</th>
+                            </tr>
+                        </thead>
+                        <tbody id="trades-table">
+                            <tr>
+                                <td colspan="7" class="text-center text-muted">거래 내역이 없습니다</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- API Key 모달 -->
+<div class="modal fade" id="apiKeyModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">업비트 API 키 입력</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">Access Key</label>
+                    <input type="text" class="form-control" id="access-key" placeholder="업비트 Access Key">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Secret Key</label>
+                    <input type="password" class="form-control" id="secret-key" placeholder="업비트 Secret Key">
+                </div>
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    API 키는 안전하게 보관되며, 거래 목적으로만 사용됩니다.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+                <button type="button" class="btn btn-primary" onclick="startTrading()">거래 시작</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// Socket.IO 연결
+const socket = io();
+
+// 차트 초기화
+let balanceChart = null;
+
+// 페이지 로드 시 초기화
+document.addEventListener('DOMContentLoaded', function() {
+    initializeChart();
+    updateCurrentTime();
+    setInterval(updateCurrentTime, 1000);
+    loadData();
+    setInterval(loadData, 5000); // 5초마다 데이터 업데이트
+});
+
+// 현재 시간 업데이트
+function updateCurrentTime() {
+    const now = new Date();
+    document.getElementById('current-time').textContent = now.toLocaleString('ko-KR');
+}
+
+// 차트 초기화
+function initializeChart() {
+    const ctx = document.getElementById('balanceChart').getContext('2d');
+    balanceChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: '총 자산 (원)',
+                data: [],
+                borderColor: '#667eea',
+                backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                tension: 0.4,
+                fill: true
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    beginAtZero: false,
+                    ticks: {
+                        callback: function(value) {
+                            return value.toLocaleString() + '원';
+                        }
+                    }
+                },
+                x: {
+                    display: true
+                }
+            },
+            plugins: {
+                legend: {
+                    display: false
+                }
+            }
+        }
+    });
+}
+
+// 데이터 로드
+async function loadData() {
+    try {
+        // 상태 정보
+        const statusResponse = await fetch('/api/status');
+        const status = await statusResponse.json();
+        updateStatus(status);
+
+        // 가격 정보
+        const pricesResponse = await fetch('/api/prices');
+        const prices = await pricesResponse.json();
+        updatePrices(prices);
+
+        // 포지션 정보
+        const positionsResponse = await fetch('/api/positions');
+        const positions = await positionsResponse.json();
+        updatePositions(positions);
+
+        // 거래 내역
+        const tradesResponse = await fetch('/api/trades');
+        const trades = await tradesResponse.json();
+        updateTrades(trades);
+
+        // 성과 데이터
+        const performanceResponse = await fetch('/api/performance');
+        const performance = await performanceResponse.json();
+        updateChart(performance);
+
+    } catch (error) {
+        console.error('데이터 로드 실패:', error);
+    }
+}
+
+// 상태 업데이트
+function updateStatus(status) {
+    const statusCard = document.getElementById('status-card');
+    const systemStatus = document.getElementById('system-status');
+
+    if (status.is_running) {
+        statusCard.className = 'status-card status-running';
+        systemStatus.textContent = '운영중';
+    } else {
+        statusCard.className = 'status-card status-stopped';
+        systemStatus.textContent = '중지됨';
+    }
+
+    document.getElementById('total-balance').textContent =
+        status.total_balance ? status.total_balance.toLocaleString() + ' 원' : '0 원';
+
+    document.getElementById('daily-pnl').textContent =
+        status.daily_pnl ? status.daily_pnl.toLocaleString() + ' 원' : '0 원';
+
+    document.getElementById('last-update').textContent =
+        status.last_update ? new Date(status.last_update).toLocaleString('ko-KR') : '-';
+
+    document.getElementById('active-positions').textContent = status.positions || 0;
+    document.getElementById('trades-today').textContent = status.trades_today || 0;
+    document.getElementById('risk-level').textContent = status.risk_level || 'LOW';
+}
+
+// 가격 업데이트
+function updatePrices(prices) {
+    const priceList = document.getElementById('price-list');
+    let html = '';
+
+    for (const [symbol, price] of Object.entries(prices)) {
+        const coin = symbol.split('-')[1];
+        html += `
+            <div class="d-flex justify-content-between align-items-center py-2 border-bottom">
+                <div>
+                    <strong>${coin}</strong>
+                    <small class="text-muted">${symbol}</small>
+                </div>
+                <div class="text-end">
+                    <div class="fw-bold">${price.toLocaleString()}</div>
+                </div>
+            </div>
+        `;
+    }
+
+    priceList.innerHTML = html || '<p class="text-muted text-center">가격 정보 없음</p>';
+}
+
+// 포지션 업데이트
+function updatePositions(positions) {
+    const tbody = document.getElementById('positions-table');
+
+    if (!positions || positions.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9" class="text-center text-muted">포지션이 없습니다</td></tr>';
+        return;
+    }
+
+    let html = '';
+    positions.forEach(position => {
+        const pnlClass = position.pnl >= 0 ? 'profit-positive' : 'profit-negative';
+        const pnlRateClass = position.pnl_rate >= 0 ? 'profit-positive' : 'profit-negative';
+
+        html += `
+            <tr>
+                <td><strong>${position.symbol.split('-')[1]}</strong></td>
+                <td>${position.entry_price.toLocaleString()}</td>
+                <td>${position.current_price.toLocaleString()}</td>
+                <td>${position.quantity.toFixed(8)}</td>
+                <td class="${pnlClass}">${position.pnl.toLocaleString()}</td>
+                <td class="${pnlRateClass}">${position.pnl_rate.toFixed(2)}%</td>
+                <td>${new Date(position.entry_time).toLocaleString('ko-KR')}</td>
+                <td>${position.stop_loss.toLocaleString()}</td>
+                <td>${position.take_profit.toLocaleString()}</td>
+            </tr>
+        `;
+    });
+
+    tbody.innerHTML = html;
+}
+
+// 거래 내역 업데이트
+function updateTrades(trades) {
+    const tbody = document.getElementById('trades-table');
+
+    if (!trades || trades.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">거래 내역이 없습니다</td></tr>';
+        return;
+    }
+
+    let html = '';
+    trades.forEach(trade => {
+        const profitClass = trade.profit_rate >= 0 ? 'profit-positive' : 'profit-negative';
+
+        html += `
+            <tr>
+                <td>${new Date(trade.exit_time).toLocaleString('ko-KR')}</td>
+                <td><strong>${trade.symbol.split('-')[1]}</strong></td>
+                <td><span class="badge bg-info">매도</span></td>
+                <td>${trade.entry_price.toLocaleString()}</td>
+                <td>${trade.exit_price.toLocaleString()}</td>
+                <td class="${profitClass}">${trade.profit_rate.toFixed(2)}%</td>
+                <td><span class="badge bg-secondary">${trade.signal}</span></td>
+            </tr>
+        `;
+    });
+
+    tbody.innerHTML = html;
+}
+
+// 차트 업데이트
+function updateChart(performance) {
+    if (!performance || performance.length === 0) return;
+
+    const labels = performance.map(p => new Date(p.timestamp).toLocaleTimeString('ko-KR'));
+    const data = performance.map(p => p.balance);
+
+    balanceChart.data.labels = labels;
+    balanceChart.data.datasets[0].data = data;
+    balanceChart.update();
+}
+
+// API 키 모달 표시
+function showApiKeyModal() {
+    const modal = new bootstrap.Modal(document.getElementById('apiKeyModal'));
+    modal.show();
+}
+
+// 거래 시작
+async function startTrading() {
+    const accessKey = document.getElementById('access-key').value;
+    const secretKey = document.getElementById('secret-key').value;
+
+    if (!accessKey || !secretKey) {
+        alert('API 키를 모두 입력해주세요.');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/start_trading', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                access_key: accessKey,
+                secret_key: secretKey
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            alert(result.message);
+            const modal = bootstrap.Modal.getInstance(document.getElementById('apiKeyModal'));
+            modal.hide();
+            // 입력 필드 클리어
+            document.getElementById('access-key').value = '';
+            document.getElementById('secret-key').value = '';
+        } else {
+            alert(result.message);
+        }
+    } catch (error) {
+        alert('거래 시작 실패: ' + error.message);
+    }
+}
+
+// 거래 중지
+async function stopTrading() {
+    if (!confirm('거래를 중지하시겠습니까?')) return;
+
+    try {
+        const response = await fetch('/api/stop_trading', {
+            method: 'POST'
+        });
+
+        const result = await response.json();
+        alert(result.message);
+    } catch (error) {
+        alert('거래 중지 실패: ' + error.message);
+    }
+}
+
+// 비상 정지
+async function emergencyStop() {
+    if (!confirm('비상 정지를 실행하시겠습니까? 모든 포지션이 즉시 청산됩니다.')) return;
+
+    try {
+        const response = await fetch('/api/emergency_stop', {
+            method: 'POST'
+        });
+
+        const result = await response.json();
+        alert(result.message);
+    } catch (error) {
+        alert('비상 정지 실패: ' + error.message);
+    }
+}
+
+// Socket.IO 이벤트 처리
+socket.on('status_update', function(status) {
+    updateStatus(status);
+});
+
+socket.on('price_update', function(prices) {
+    updatePrices(prices);
+});
+
+</script>
+
+</body>
+</html>
