@@ -9,8 +9,13 @@ import smtplib
 import requests
 from datetime import datetime
 from typing import Dict, List, Optional
-from email.mime.text import MimeText
-from email.mime.multipart import MimeMultipart
+try:
+    from email.mime.text import MimeText
+    from email.mime.multipart import MimeMultipart
+except ImportError:
+    # Python 3.13 호환성을 위한 대체 import
+    MimeText = None
+    MimeMultipart = None
 
 
 class NotificationSystem:

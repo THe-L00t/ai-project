@@ -678,6 +678,274 @@ class UpbitAPI:
             self.ws_callbacks.clear()
             self.logger.info("웹소켓 연결 종료")
 
+    # ==========================================================================
+    # 지갑 연결 및 입출금 API
+    # ==========================================================================
+
+    def GetCoinAddresses(self) -> List[Dict]:
+        """
+        코인 출금 주소 목록 조회
+
+        Returns:
+            출금 주소 정보 리스트
+        """
+        try:
+            response = self._MakeRequest('GET', '/deposits/coin_addresses', auth_required=True)
+            return response
+        except Exception as e:
+            self.logger.error(f"출금 주소 목록 조회 실패: {e}")
+            return []
+
+    def GetCoinAddress(self, currency: str, net_type: str = None) -> Optional[Dict]:
+        """
+        개별 코인 출금 주소 조회
+
+        Args:
+            currency: 화폐 심볼 (예: 'BTC', 'ETH')
+            net_type: 네트워크 타입 (선택사항)
+
+        Returns:
+            출금 주소 정보
+        """
+        try:
+            params = {'currency': currency}
+            if net_type:
+                params['net_type'] = net_type
+
+            response = self._MakeRequest('GET', '/deposits/coin_address', params, auth_required=True)
+            return response
+        except Exception as e:
+            self.logger.error(f"출금 주소 조회 실패: {e}")
+            return None
+
+    def CreateCoinAddress(self, currency: str, net_type: str = None) -> Optional[Dict]:
+        """
+        코인 출금 주소 생성 요청
+
+        Args:
+            currency: 화폐 심볼 (예: 'BTC', 'ETH')
+            net_type: 네트워크 타입 (선택사항)
+
+        Returns:
+            출금 주소 생성 결과
+        """
+        try:
+            params = {'currency': currency}
+            if net_type:
+                params['net_type'] = net_type
+
+            response = self._MakeRequest('POST', '/deposits/generate_coin_address', params, auth_required=True)
+            self.logger.info(f"{currency} 출금 주소 생성 요청 완료")
+            return response
+        except Exception as e:
+            self.logger.error(f"출금 주소 생성 실패: {e}")
+            return None
+
+    def WithdrawCoin(self, currency: str, amount: float, address: str,
+                    secondary_address: str = None, transaction_type: str = 'default') -> Optional[Dict]:
+        """
+        코인 출금하기
+
+        Args:
+            currency: 화폐 심볼 (예: 'BTC', 'ETH')
+            amount: 출금 수량
+            address: 출금 주소
+            secondary_address: 2차 주소 (필요시)
+            transaction_type: 출금 유형 ('default' 또는 'internal')
+
+        Returns:
+            출금 결과
+        """
+        try:
+            params = {
+                'currency': currency,
+                'amount': str(amount),
+                'address': address,
+                'transaction_type': transaction_type
+            }
+
+            if secondary_address:
+                params['secondary_address'] = secondary_address
+
+            response = self._MakeRequest('POST', '/withdraws/coin', params, auth_required=True)
+
+            self.logger.info(f"코인 출금 요청 완료: {currency} {amount} → {address}")
+            return response
+        except Exception as e:
+            self.logger.error(f"코인 출금 실패: {e}")
+            return None
+
+    def WithdrawKRW(self, amount: int) -> Optional[Dict]:
+        """
+        원화 출금하기
+
+        Args:
+            amount: 출금 금액 (원)
+
+        Returns:
+            출금 결과
+        """
+        try:
+            params = {'amount': str(amount)}
+            response = self._MakeRequest('POST', '/withdraws/krw', params, auth_required=True)
+
+            self.logger.info(f"원화 출금 요청 완료: {amount:,}원")
+            return response
+        except Exception as e:
+            self.logger.error(f"원화 출금 실패: {e}")
+            return None
+
+    def GetDepositHistory(self, currency: str = None, state: str = None,
+                         uuids: List[str] = None, page: int = 1, limit: int = 100) -> List[Dict]:
+        """
+        입금 내역 조회
+
+        Args:
+            currency: 특정 화폐 (선택사항)
+            state: 입금 상태 ('WAITING', 'PROCESSING', 'DONE', 'CANCELLED', 'REJECTED')
+            uuids: 특정 입금 UUID 리스트 (선택사항)
+            page: 페이지 번호
+            limit: 조회 개수 (최대 100)
+
+        Returns:
+            입금 내역 리스트
+        """
+        try:
+            params = {'page': page, 'limit': min(limit, 100)}
+
+            if currency:
+                params['currency'] = currency
+            if state:
+                params['state'] = state
+            if uuids:
+                params['uuids'] = uuids
+
+            response = self._MakeRequest('GET', '/deposits', params, auth_required=True)
+            return response
+        except Exception as e:
+            self.logger.error(f"입금 내역 조회 실패: {e}")
+            return []
+
+    def GetWithdrawHistory(self, currency: str = None, state: str = None,
+                          uuids: List[str] = None, page: int = 1, limit: int = 100) -> List[Dict]:
+        """
+        출금 내역 조회
+
+        Args:
+            currency: 특정 화폐 (선택사항)
+            state: 출금 상태 ('WAITING', 'PROCESSING', 'DONE', 'CANCELLED', 'REJECTED')
+            uuids: 특정 출금 UUID 리스트 (선택사항)
+            page: 페이지 번호
+            limit: 조회 개수 (최대 100)
+
+        Returns:
+            출금 내역 리스트
+        """
+        try:
+            params = {'page': page, 'limit': min(limit, 100)}
+
+            if currency:
+                params['currency'] = currency
+            if state:
+                params['state'] = state
+            if uuids:
+                params['uuids'] = uuids
+
+            response = self._MakeRequest('GET', '/withdraws', params, auth_required=True)
+            return response
+        except Exception as e:
+            self.logger.error(f"출금 내역 조회 실패: {e}")
+            return []
+
+    def GetWithdrawLimit(self, currency: str) -> Optional[Dict]:
+        """
+        출금 한도 조회
+
+        Args:
+            currency: 화폐 심볼 (예: 'BTC', 'ETH')
+
+        Returns:
+            출금 한도 정보
+        """
+        try:
+            params = {'currency': currency}
+            response = self._MakeRequest('GET', '/withdraws/limit', params, auth_required=True)
+            return response
+        except Exception as e:
+            self.logger.error(f"출금 한도 조회 실패: {e}")
+            return None
+
+    # ==========================================================================
+    # 지갑 연결 편의 메서드
+    # ==========================================================================
+
+    def SetupWallet(self, currency: str, net_type: str = None) -> Optional[str]:
+        """
+        지갑 연결 설정 (입금 주소 생성/조회)
+
+        Args:
+            currency: 화폐 심볼 (예: 'BTC', 'ETH')
+            net_type: 네트워크 타입 (선택사항)
+
+        Returns:
+            입금 주소
+        """
+        try:
+            # 기존 주소 확인
+            address_info = self.GetCoinAddress(currency, net_type)
+
+            if address_info and address_info.get('deposit_address'):
+                address = address_info['deposit_address']
+                self.logger.info(f"{currency} 기존 입금 주소 사용: {address}")
+                return address
+            else:
+                # 새 주소 생성
+                result = self.CreateCoinAddress(currency, net_type)
+                if result:
+                    self.logger.info(f"{currency} 새 입금 주소 생성 요청 완료")
+                    return "주소 생성 중... 잠시 후 다시 조회해주세요."
+                return None
+
+        except Exception as e:
+            self.logger.error(f"지갑 설정 실패: {e}")
+            return None
+
+    def TransferToExternalWallet(self, currency: str, amount: float, address: str,
+                                memo: str = None) -> Optional[Dict]:
+        """
+        외부 지갑으로 코인 전송
+
+        Args:
+            currency: 화폐 심볼
+            amount: 전송 수량
+            address: 수신 주소
+            memo: 메모 (필요시)
+
+        Returns:
+            전송 결과
+        """
+        try:
+            # 출금 한도 확인
+            limit_info = self.GetWithdrawLimit(currency)
+            if limit_info:
+                available = float(limit_info.get('limit_available', 0))
+                if amount > available:
+                    self.logger.error(f"출금 한도 초과: 요청 {amount}, 가능 {available}")
+                    return None
+
+            # 잔고 확인
+            balance = self.GetCoinBalance(currency)
+            if amount > balance:
+                self.logger.error(f"잔고 부족: 요청 {amount}, 보유 {balance}")
+                return None
+
+            # 출금 실행
+            return self.WithdrawCoin(currency, amount, address, memo)
+
+        except Exception as e:
+            self.logger.error(f"외부 지갑 전송 실패: {e}")
+            return None
+
     def __del__(self):
         """소멸자 - 웹소켓 정리"""
         try:

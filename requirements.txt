@@ -1,30 +1,33 @@
-# 코인 자동매매 AI 프로젝트 의존성
+# 코인 자동매매 AI 프로젝트 의존성 (Python 3.13 호환)
 
 # 데이터 처리
-pandas>=1.5.0
-numpy>=1.24.0
-scipy>=1.10.0
+pandas>=1.5.0,<3.0.0
+numpy>=1.24.0,<2.0.0
+scipy>=1.9.0,<2.0.0
 
 # 거래소 API
 ccxt>=4.0.0
 websocket-client>=1.6.0
+PyJWT>=2.8.0  # 업비트 JWT 토큰
+urllib3>=1.26.0  # HTTP 요청
+requests>=2.31.0
 
-# AI/ML 라이브러리
-scikit-learn>=1.3.0
-tensorflow>=2.13.0
+# AI/ML 라이브러리 (선택적)
+scikit-learn>=1.3.0,<2.0.0
+# tensorflow>=2.13.0  # Python 3.13 미지원으로 주석 처리
 # pytorch>=2.0.0  # 선택적 사용
 
-# 기술적 지표
-TA-Lib>=0.4.25
-pandas-ta>=0.3.14b
+# 기술적 지표 (간소화)
+# TA-Lib>=0.4.25  # 컴파일 오류 가능성으로 주석 처리
+# pandas-ta>=0.3.14b
 
-# 백테스팅
-backtrader>=1.9.78.123
-zipline-reloaded>=2.2.0
+# 백테스팅 (간소화)
+# backtrader>=1.9.78.123  # Python 3.13 미지원
+# zipline-reloaded>=2.2.0  # Python 3.13 미지원
 
 # 데이터베이스
 SQLAlchemy>=2.0.0
-sqlite3  # 내장 모듈
+# sqlite3은 Python 내장 모듈이므로 제거
 # postgresql-adapter>=2.9.7  # PostgreSQL 사용시
 
 # 환경 설정
