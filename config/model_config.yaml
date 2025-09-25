@@ -1,0 +1,314 @@
+# AI 모델 설정 파일
+# Random Forest + 강화학습 모델 설정
+
+# 예측 모델 전체 설정
+prediction_models:
+  # 앵상블 설정
+  ensemble:
+    enabled: true
+    voting_method: "weighted"  # weighted, soft, hard
+    weights:
+      random_forest: 0.4  # 40%
+      reinforcement_learning: 0.35  # 35%
+      news_sentiment: 0.25  # 25%
+  
+  # 모델 업데이트 주기
+  retrain_schedule:
+    frequency: "weekly"  # daily, weekly, monthly
+    day_of_week: "sunday"
+    time: "02:00"
+    timezone: "Asia/Seoul"
+
+# Random Forest 모델 설정
+random_forest:
+  # 기본 파라미터
+  parameters:
+    n_estimators: 200
+    max_depth: 15
+    min_samples_split: 5
+    min_samples_leaf: 2
+    max_features: "sqrt"
+    bootstrap: true
+    random_state: 42
+    n_jobs: -1
+  
+  # 학습 데이터 설정
+  training_data:
+    lookback_days: 730  # 2년 데이터
+    features:
+      # 기술적 지표
+      technical:
+        - "sma_5"
+        - "sma_20"
+        - "sma_50"
+        - "ema_12"
+        - "ema_26"
+        - "rsi_14"
+        - "macd"
+        - "macd_signal"
+        - "bollinger_upper"
+        - "bollinger_lower"
+        - "volume_sma_20"
+        - "atr_14"
+        - "stoch_k"
+        - "stoch_d"
+      
+      # 시간 특성
+      temporal:
+        - "hour_of_day"
+        - "day_of_week"
+        - "day_of_month"
+        - "is_weekend"
+        - "korean_market_hours"
+      
+      # 시장 데이터
+      market:
+        - "price_change_1h"
+        - "price_change_4h"
+        - "price_change_24h"
+        - "volume_change_24h"
+        - "market_cap_rank"
+        - "dominance_ratio"
+  
+  # 모델 검증
+  validation:
+    method: "time_series_split"  # 시계열 데이터용
+    n_splits: 5
+    test_size: 0.2
+    gap_days: 1  # 학습-테스트 간격
+  
+  # 특성 선택
+  feature_selection:
+    enabled: true
+    method: "importance"  # importance, correlation, rfe
+    top_n_features: 50
+    importance_threshold: 0.001
+
+# 강화학습 모델 설정
+reinforcement_learning:
+  # 알고리즘 선택
+  algorithm: "PPO"  # PPO, A3C, DQN, SAC
+  
+  # PPO 파라미터
+  ppo_params:
+    learning_rate: 0.0003
+    gamma: 0.99  # 할인 인수
+    clip_range: 0.2
+    ent_coef: 0.01  # 엔트로피 계수
+    vf_coef: 0.5    # 가치 함수 계수
+    max_grad_norm: 0.5
+    n_steps: 2048
+    batch_size: 64
+    n_epochs: 10
+  
+  # 환경 설정
+  environment:
+    # 상태 공간
+    observation_space:
+      # 시장 데이터 (50차원)
+      market_features: 30
+      # 포트폴리오 데이터 (10차원)
+      portfolio_features: 10
+      # 뉴스 감정 데이터 (5차원)
+      sentiment_features: 5
+      # 시간 데이터 (5차원)
+      time_features: 5
+    
+    # 행동 공간
+    action_space:
+      type: "discrete"  # discrete, continuous
+      actions:
+        - 0  # HOLD (보유)
+        - 1  # BUY_WEAK (약한 매수)
+        - 2  # BUY_STRONG (강한 매수)
+        - 3  # SELL_WEAK (약한 매도)
+        - 4  # SELL_STRONG (강한 매도)
+    
+    # 보상 함수
+    reward_function:
+      # 수익률 보상
+      profit_reward_scale: 100.0
+      # 리스크 페널티
+      risk_penalty_scale: 50.0
+      # 거래 비용 페널티
+      transaction_cost_penalty: 0.1
+      # 샤프 비율 보상
+      sharpe_reward_scale: 10.0
+      # 드로다운 페널티
+      drawdown_penalty_scale: 20.0
+  
+  # 학습 설정
+  training:
+    total_timesteps: 1000000
+    eval_freq: 10000
+    save_freq: 50000
+    log_interval: 1000
+    
+    # 단계적 학습
+    curriculum_learning:
+      enabled: true
+      stages:
+        - name: "basic_trading"
+          timesteps: 300000
+          complexity: 0.3
+        - name: "advanced_trading"
+          timesteps: 400000
+          complexity: 0.7
+        - name: "expert_trading"
+          timesteps: 300000
+          complexity: 1.0
+
+# 뉴스 감정 모델 설정
+news_sentiment:
+  # 감정 분석 모델
+  sentiment_model:
+    korean:
+      model_name: "klue/roberta-small"
+      tokenizer: "klue/roberta-small"
+      max_length: 512
+      
+    english:
+      model_name: "cardiffnlp/twitter-roberta-base-sentiment-latest"
+      tokenizer: "cardiffnlp/twitter-roberta-base-sentiment-latest"
+      max_length: 512
+  
+  # 감정 지수 계산
+  sentiment_scoring:
+    # 시간 가중치 (24시간 = 1.0, 1시간 = 0.8)
+    time_decay_factor: 0.1  # 시간당 10% 감소
+    
+    # 소스 신뢰도 가중치
+    source_weights:
+      tier1: 1.0    # CoinDesk, CoinTelegraph 등
+      tier2: 0.8    # 중간 메디어
+      tier3: 0.6    # 소규모 메디어
+    
+    # 코인별 가중치
+    coin_relevance:
+      direct_mention: 1.0     # 코인 직접 언급
+      category_mention: 0.5   # 카테고리 언급 (DeFi, NFT 등)
+      general_crypto: 0.3     # 일반 암호화폐 뉴스
+  
+  # 감정 지표 생성
+  indicators:
+    # 단기 감정 (1시간)
+    short_term_sentiment:
+      window_hours: 1
+      min_articles: 5
+      
+    # 중기 감정 (6시간)
+    medium_term_sentiment:
+      window_hours: 6
+      min_articles: 15
+      
+    # 장기 감정 (24시간)
+    long_term_sentiment:
+      window_hours: 24
+      min_articles: 30
+
+# 모델 성능 평가
+model_evaluation:
+  # 평가 지표
+  metrics:
+    # 분류 성능
+    classification:
+      - "accuracy"
+      - "precision"
+      - "recall"
+      - "f1_score"
+      - "roc_auc"
+    
+    # 회귀 성능
+    regression:
+      - "mae"   # Mean Absolute Error
+      - "mse"   # Mean Squared Error
+      - "rmse"  # Root Mean Squared Error
+      - "r2"    # R-squared
+    
+    # 거래 성능
+    trading:
+      - "total_return"
+      - "sharpe_ratio"
+      - "max_drawdown"
+      - "win_rate"
+      - "profit_factor"
+  
+  # 벡테스팅 설정
+  backtesting:
+    start_date: "2022-01-01"
+    end_date: "2024-01-01"
+    initial_capital: 100000
+    commission: 0.0005
+    
+    # 성능 기준
+    performance_thresholds:
+      min_sharpe_ratio: 1.0
+      max_drawdown: 0.2
+      min_win_rate: 0.55
+      min_annual_return: 0.15
+
+# 모델 배포 설정
+deployment:
+  # 모델 저장
+  model_storage:
+    path: "models/"
+    versioning: true
+    max_versions: 10
+    
+  # A/B 테스트
+  ab_testing:
+    enabled: true
+    traffic_split: 0.1  # 10%로 신모델 테스트
+    duration_days: 7
+    
+  # 모델 모니터링
+  monitoring:
+    performance_check_interval: 3600  # 1시간마다
+    drift_detection:
+      enabled: true
+      threshold: 0.1
+      window_size: 1000
+    
+    # 성능 저하 알림
+    alerts:
+      accuracy_drop_threshold: 0.05
+      return_drop_threshold: 0.1
+      
+# 하이퍼파라미터 자동 튜닝
+hyperparameter_tuning:
+  # 튜닝 방법
+  method: "optuna"  # optuna, grid_search, random_search
+  
+  # 탐색 공간
+  search_space:
+    random_forest:
+      n_estimators: [100, 200, 300, 500]
+      max_depth: [10, 15, 20, 25, null]
+      min_samples_split: [2, 5, 10]
+      min_samples_leaf: [1, 2, 4]
+      
+    ppo:
+      learning_rate: [0.0001, 0.001, 0.01]
+      gamma: [0.95, 0.99, 0.995]
+      clip_range: [0.1, 0.2, 0.3]
+      
+  # 튜닝 설정
+  tuning_config:
+    n_trials: 100
+    timeout_seconds: 3600
+    n_jobs: 1
+    study_direction: "maximize"
+    
+# 로깅 및 디버깅
+logging:
+  model_training:
+    level: "INFO"
+    file: "logs/model_training.log"
+    
+  predictions:
+    level: "DEBUG"
+    file: "logs/predictions.log"
+    
+  performance:
+    level: "INFO"
+    file: "logs/model_performance.log"

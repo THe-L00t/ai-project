@@ -1,0 +1,190 @@
+# 거래 설정 파일
+# 업비트 API 기반 자동매매 설정
+
+# 거래소 설정
+exchange:
+  name: "upbit"
+  api_url: "https://api.upbit.com"
+  websocket_url: "wss://api.upbit.com/websocket/v1"
+  timezone: "Asia/Seoul"
+  commission_rate: 0.0005  # 0.05%
+
+# 거래 기본 설정
+trading_settings:
+  # 기본 자본 및 배분
+  initial_capital: 100000  # 10만원
+  max_position_ratio: 0.9  # 최대 포지션 비율 90%
+  reserve_cash_ratio: 0.1  # 비상금 10%
+  
+  # 주문 설정
+  order_type: "limit"  # limit, market
+  order_timeout: 300  # 5분
+  max_slippage: 0.005  # 0.5%
+  min_order_amount: 5000  # 최소 주문금액 5000원
+  
+  # 거래 시간 설정
+  trading_hours:
+    start: "00:00"  # 24시간 거래
+    end: "23:59"
+    timezone: "Asia/Seoul"
+    exclude_weekends: false  # 암호화폐는 주말도 거래
+  
+  # 매매 전략 설정
+  strategy:
+    type: "scalping"  # scalping, swing, position
+    frequency: "high"  # low, medium, high
+    hold_time_max: 1440  # 최대 보유시간 (분) - 24시간
+    hold_time_min: 5  # 최소 보유시간 (분)
+
+# 리스크 관리 설정
+risk_management:
+  # 손실 기준
+  max_loss_per_trade: 0.02  # 거래당 최대 손실 2%
+  max_daily_loss: 0.05  # 일일 최대 손실 5%
+  max_weekly_loss: 0.15  # 주간 최대 손실 15%
+  
+  # 스톱로스 설정
+  stop_loss:
+    enabled: true
+    type: "percentage"  # percentage, trailing
+    percentage: 0.03  # 3%
+    trailing_distance: 0.015  # 1.5%
+  
+  # 익절매 설정
+  take_profit:
+    enabled: true
+    type: "percentage"
+    percentage: 0.05  # 5%
+    partial_profit: true
+    partial_ratio: 0.5  # 50% 부분매도
+  
+  # 포지션 관리
+  position_sizing:
+    method: "kelly"  # fixed, percentage, kelly, volatility
+    base_size: 0.1  # 기본 포지션 크기 10%
+    max_size: 0.3  # 최대 포지션 크기 30%
+    volatility_adjustment: true
+
+# 타겟 코인 설정
+target_coins:
+  # 주력 코인 (KRW 마켓)
+  primary:
+    - symbol: "KRW-BTC"
+      name: "비트코인"
+      weight: 0.4  # 40% 비중
+      min_volume: 1000000000  # 최소 거래대금 10억원
+      
+    - symbol: "KRW-ETH"
+      name: "이더리움"
+      weight: 0.3  # 30% 비중
+      min_volume: 500000000  # 최소 거래대금 5억원
+      
+    - symbol: "KRW-XRP"
+      name: "리플"
+      weight: 0.15  # 15% 비중
+      min_volume: 300000000
+      
+    - symbol: "KRW-ADA"
+      name: "카르다노"
+      weight: 0.15  # 15% 비중
+      min_volume: 200000000
+  
+  # 보조 코인 (고변동성)
+  secondary:
+    - "KRW-SOL"
+    - "KRW-AVAX"
+    - "KRW-MATIC"
+    - "KRW-DOT"
+    - "KRW-LINK"
+    - "KRW-UNI"
+  
+  # 제외 코인 (거래 금지)
+  blacklist:
+    - "KRW-LUNA"  # 가격 붕괴 이력
+    - "KRW-UST"   # 디페깅 이력
+
+# 기술적 지표 설정
+technical_indicators:
+  # 이동평균
+  moving_averages:
+    sma_periods: [5, 20, 50, 200]
+    ema_periods: [12, 26, 50]
+  
+  # 모멘텀 지표
+  momentum:
+    rsi_period: 14
+    macd_fast: 12
+    macd_slow: 26
+    macd_signal: 9
+    stoch_k: 14
+    stoch_d: 3
+  
+  # 변동성 지표
+  volatility:
+    bollinger_period: 20
+    bollinger_std: 2
+    atr_period: 14
+  
+  # 볼륨 지표
+  volume:
+    vwap_period: 20
+    volume_sma: 20
+    money_flow_index: 14
+
+# AI 모델 연동 설정
+ai_integration:
+  # 예측 신룰도 최소 기준
+  min_confidence: 0.7  # 70%
+  
+  # 예측 기간
+  prediction_horizon: 60  # 분 단위
+  
+  # 뉴스 감정 가중치
+  news_sentiment_weight: 0.3  # 30%
+  technical_analysis_weight: 0.5  # 50%
+  market_momentum_weight: 0.2  # 20%
+  
+  # 신호 강도 기준
+  signal_threshold:
+    strong_buy: 0.8
+    buy: 0.6
+    hold: 0.4
+    sell: 0.2
+    strong_sell: 0.0
+
+# 알림 설정
+notifications:
+  # 테레그램 알림
+  telegram:
+    enabled: true
+    trade_notifications: true
+    error_notifications: true
+    daily_summary: true
+    
+  # 로깅 설정
+  logging:
+    level: "INFO"
+    trade_log: "logs/trading.log"
+    error_log: "logs/errors.log"
+    max_size_mb: 100
+    backup_count: 10
+
+# 성능 모니터링
+performance_tracking:
+  # KPI 목표
+  targets:
+    monthly_return: 0.1  # 10%
+    win_rate: 0.6  # 60%
+    max_drawdown: 0.15  # 15%
+    sharpe_ratio: 1.5
+  
+  # 리포트 주기
+  reporting:
+    daily_report: true
+    weekly_report: true
+    monthly_report: true
+    
+  # 성능 지표 계산
+  metrics:
+    benchmark: "KRW-BTC"  # 벤치마크 자산
+    risk_free_rate: 0.025  # 무위험 이자율 2.5%

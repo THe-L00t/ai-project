@@ -1,0 +1,92 @@
+# 코인 자동매매 AI .gitignore
+
+# 환경 변수 및 보안
+.env
+*.key
+*.pem
+secrets/
+api_keys.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# 가상환경
+venv/
+env/
+ENV/
+.venv/
+.env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# 데이터 파일
+data/*.csv
+data/*.json
+data/*.pkl
+data/*.db
+data/*.sqlite
+data/*.h5
+logs/*.log
+logs/*.txt
+
+# 모델 파일
+models/*.pkl
+models/*.h5
+models/*.pt
+models/*.pth
+models/*.onnx
+*.model
+
+# 백테스팅 결과
+backtests/results/
+backtests/reports/
+backtests/*.html
+
+# 임시 파일
+temp/
+tmp/
+cache/
+*.tmp
+
+# 시스템 파일
+.DS_Store
+Thumbs.db
+
+# 거래 기록 (민감한 정보)
+trades/
+portfolio/
+performance_reports/
+
+# 설정 파일 (환경별)
+config/production.yaml
+config/local.yaml

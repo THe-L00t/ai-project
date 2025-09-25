@@ -1,0 +1,109 @@
+# 뉴스 소스 설정
+# 전세계 암호화폐 뉴스를 수집하기 위한 소스 정의
+
+news_sources:
+  # 글로벌 주요 매체
+  global:
+    coindesk:
+      name: "CoinDesk"
+      url: "https://www.coindesk.com"
+      rss_feed: "https://www.coindesk.com/arc/outboundfeeds/rss/"
+      language: "en"
+      reliability: 0.9
+      update_frequency: 60  # 초
+
+    cointelegraph:
+      name: "CoinTelegraph"
+      url: "https://cointelegraph.com"
+      rss_feed: "https://cointelegraph.com/rss"
+      language: "en"
+      reliability: 0.85
+      update_frequency: 60
+
+    decrypt:
+      name: "Decrypt"
+      url: "https://decrypt.co"
+      rss_feed: "https://decrypt.co/feed"
+      language: "en"
+      reliability: 0.8
+      update_frequency: 120
+
+    coinjournal:
+      name: "CoinJournal"
+      url: "https://coinjournal.net"
+      rss_feed: "https://coinjournal.net/news/feed/"
+      language: "en"
+      reliability: 0.75
+      update_frequency: 300
+
+  # 한국 매체
+  korean:
+    coindesk_korea:
+      name: "코인데스크 코리아"
+      url: "https://www.coindeskkorea.com"
+      rss_feed: "https://www.coindeskkorea.com/feed/"
+      language: "ko"
+      reliability: 0.85
+      update_frequency: 120
+
+    blockmedia:
+      name: "블록미디어"
+      url: "https://blockmedia.co.kr"
+      rss_feed: "https://blockmedia.co.kr/feed/"
+      language: "ko"
+      reliability: 0.8
+      update_frequency: 180
+
+    tokenpost:
+      name: "토큰포스트"
+      url: "https://www.tokenpost.kr"
+      rss_feed: "https://www.tokenpost.kr/rss/S1N1.xml"
+      language: "ko"
+      reliability: 0.75
+      update_frequency: 300
+
+# 뉴스 분석 설정
+analysis_config:
+  # 감정 분석 키워드
+  sentiment_keywords:
+    positive:
+      korean: ["상승", "호재", "돌파", "급등", "투자", "성장", "긍정", "낙관", "지지", "강세"]
+      english: ["rise", "surge", "breakthrough", "bullish", "positive", "growth", "investment", "support"]
+
+    negative:
+      korean: ["하락", "악재", "폭락", "규제", "금지", "해킹", "부정", "약세", "우려", "위험"]
+      english: ["fall", "crash", "bearish", "regulation", "ban", "hack", "negative", "concern", "risk"]
+
+    neutral:
+      korean: ["유지", "보합", "관망", "분석", "예측", "전망"]
+      english: ["maintain", "stable", "analysis", "forecast", "prediction"]
+
+  # 코인 관련 키워드
+  coin_keywords:
+    bitcoin: ["bitcoin", "btc", "비트코인"]
+    ethereum: ["ethereum", "eth", "이더리움", "이더"]
+    ripple: ["ripple", "xrp", "리플"]
+    cardano: ["cardano", "ada", "카르다노"]
+    solana: ["solana", "sol", "솔라나"]
+    dogecoin: ["dogecoin", "doge", "도지코인"]
+
+  # 중요도 가중치
+  importance_weights:
+    title_multiplier: 2.0  # 제목에 나온 키워드는 2배 가중
+    content_multiplier: 1.0
+    time_decay: 0.1  # 시간당 10% 감소
+    source_reliability_factor: 1.0
+
+# 데이터 수집 설정
+collection_config:
+  max_articles_per_source: 50
+  article_max_age_hours: 24
+  duplicate_check_similarity: 0.8
+  min_article_length: 100  # 최소 글자 수
+
+# 에러 처리 설정
+error_handling:
+  max_retries: 3
+  retry_delay: 5  # 초
+  timeout: 30  # 초
+  fallback_sources: ["coindesk", "cointelegraph"]  # 메인 소스 실패시 사용
