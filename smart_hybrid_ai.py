@@ -284,13 +284,24 @@ class SmartHybridAI:
         # 거래 설정 (AI_SETTINGS.md에서 로드)
         self.trading_mode = os.getenv('TRADING_MODE', 'paper')
         self.max_position_size = self.config.get('MAX_POSITION_SIZE', 0.15)
-        self.stop_loss_percentage = self.config.get('STOP_LOSS_PERCENTAGE', 3.0)
-        self.take_profit_percentage = self.config.get('TAKE_PROFIT_PERCENTAGE', 15.0)
+        self.stop_loss_percentage = self.config.get('STOP_LOSS_PERCENTAGE', 0.7)
+        self.take_profit_percentage = self.config.get('TAKE_PROFIT_PERCENTAGE', 1.3)
 
         # 매매 임계값 (AI_SETTINGS.md에서 로드)
-        self.buy_threshold = self.config.get('BUY_THRESHOLD_CHANGE', 0.5)
-        self.sell_threshold = self.config.get('SELL_THRESHOLD_CHANGE', -0.5)
-        self.confidence_threshold = self.config.get('MIN_CONFIDENCE_THRESHOLD', 0.3)
+        self.buy_threshold = self.config.get('BUY_THRESHOLD_CHANGE', 3.0)
+        self.sell_threshold = self.config.get('SELL_THRESHOLD_CHANGE', -1.0)
+        self.confidence_threshold = self.config.get('MIN_CONFIDENCE_THRESHOLD', 0.8)
+
+        # AI 학습 기능 설정
+        self.enable_adaptive_learning = self.config.get('ENABLE_ADAPTIVE_LEARNING', True)
+        self.enable_news_sentiment = self.config.get('ENABLE_NEWS_SENTIMENT', True)
+        self.enable_pattern_learning = self.config.get('ENABLE_PATTERN_LEARNING', True)
+
+        # 신호 가중치 설정
+        self.aggressive_pattern_weight = self.config.get('AGGRESSIVE_PATTERN_WEIGHT', 0.7)
+        self.news_sentiment_weight = self.config.get('NEWS_SENTIMENT_WEIGHT', 0.8)
+        self.adaptive_learning_weight = self.config.get('ADAPTIVE_LEARNING_WEIGHT', 0.6)
+        self.pattern_model_weight = self.config.get('PATTERN_MODEL_WEIGHT', 0.6)
 
         # 대상 코인
         self.target_coins = ['KRW-BTC', 'KRW-ETH', 'KRW-ADA', 'KRW-DOT']
@@ -300,6 +311,10 @@ class SmartHybridAI:
         self.sentiment_history = deque(maxlen=100)
         self.positions = {}
         self.last_news_update = datetime.now() - timedelta(hours=1)
+
+        # API 캐싱 시스템 (5초 TTL)
+        self.api_cache = {}
+        self.cache_ttl = 5
 
     def get_position_entry_time(self, position):
         """포지션의 진입 시간을 안전하게 가져오기"""
@@ -313,6 +328,33 @@ class SmartHybridAI:
             if 'timestamp' in position and 'entry_time' not in position:
                 position['entry_time'] = position['timestamp']
                 del position['timestamp']
+
+    def get_cached_ticker(self, markets):
+        """캐시된 티커 데이터 조회 또는 새로 가져오기"""
+        cache_key = ','.join(sorted(markets)) if isinstance(markets, list) else markets
+        current_time = time.time()
+
+        # 캐시에서 확인
+        if cache_key in self.api_cache:
+            cached_data = self.api_cache[cache_key]
+            if current_time - cached_data['timestamp'] < self.cache_ttl:
+                logger.debug(f"📋 캐시에서 티커 데이터 사용: {cache_key}")
+                return cached_data['data']
+
+        # 캐시 만료 또는 없음 - 새로 조회
+        try:
+            ticker_data = self.upbit.GetTicker(markets)
+            if ticker_data:
+                self.api_cache[cache_key] = {
+                    'data': ticker_data,
+                    'timestamp': current_time
+                }
+                logger.debug(f"🔄 새로운 티커 데이터 캐시: {cache_key}")
+                return ticker_data
+        except Exception as e:
+            logger.error(f"티커 조회 실패: {e}")
+
+        return None
 
         # 예측 모델들
         self.prediction_models = {}
@@ -328,14 +370,17 @@ class SmartHybridAI:
         # 포지션 필드 표준화
         self.normalize_position_fields()
 
-    def collect_price_features(self, market):
-        """가격 특성 수집 (안정적 버전)"""
+    def collect_price_features(self, market, ticker_data=None):
+        """가격 특성 수집 (API 최적화 버전)"""
         try:
-            ticker = self.upbit.GetTicker([market])
-            if not ticker:
-                return np.array([])
-
-            price_data = ticker[0]
+            # ticker_data가 제공되면 사용, 없으면 캐시에서 조회
+            if ticker_data and market in ticker_data:
+                price_data = ticker_data[market]
+            else:
+                ticker = self.get_cached_ticker([market])
+                if not ticker:
+                    return np.array([])
+                price_data = ticker[0]
             coin = market.split('-')[1]
 
             # 기본 특성
@@ -541,7 +586,7 @@ class SmartHybridAI:
 
         try:
             # 1. 캐시된 가격 특성
-            price_features = self.collect_price_features_cached(market, ticker)
+            price_features = self.collect_price_features(market, {market: ticker})
             if len(price_features) == 0:
                 return 'HOLD', 0.0, []
 
@@ -554,35 +599,43 @@ class SmartHybridAI:
             # 4. 강화학습 신뢰도
             rl_confidence = self.reinforcement_learner.get_trading_confidence(coin, {})
 
-            # 5. 신호 계산
+            # 5. 통합 신호 계산 (가중치 적용)
             signals = []
             reasons = []
 
-            # 가격 기반 신호
-            change_rate = price_features[0]
-            if change_rate > self.buy_threshold:
-                signals.append(('BUY', 0.6))
-                reasons.append(f"가격 상승 {change_rate:+.2f}%")
-            elif change_rate < self.sell_threshold and market in self.positions:
-                signals.append(('SELL', 0.6))
-                reasons.append(f"가격 하락 {change_rate:+.2f}%")
+            # 가격 기반 신호 (패턴 학습)
+            if self.enable_pattern_learning:
+                change_rate = price_features[0]
+                if change_rate > self.buy_threshold:
+                    weighted_conf = 0.6 * self.pattern_model_weight
+                    signals.append(('BUY', weighted_conf))
+                    reasons.append(f"패턴: 가격 상승 {change_rate:+.2f}%")
+                elif change_rate < self.sell_threshold and market in self.positions:
+                    weighted_conf = 0.6 * self.pattern_model_weight
+                    signals.append(('SELL', weighted_conf))
+                    reasons.append(f"패턴: 가격 하락 {change_rate:+.2f}%")
 
-            # 감정 기반 신호
-            if sentiment > 0.2:
-                signals.append(('BUY', sentiment_strength))
-                reasons.append(f"긍정 뉴스 {sentiment:.2f}")
-            elif sentiment < -0.2 and market in self.positions:
-                signals.append(('SELL', sentiment_strength))
-                reasons.append(f"부정 뉴스 {sentiment:.2f}")
+            # 감정 기반 신호 (뉴스 분석)
+            if self.enable_news_sentiment:
+                if sentiment > 0.2:
+                    weighted_conf = sentiment_strength * self.news_sentiment_weight
+                    signals.append(('BUY', weighted_conf))
+                    reasons.append(f"뉴스: 긍정 감정 {sentiment:.2f}")
+                elif sentiment < -0.2 and market in self.positions:
+                    weighted_conf = sentiment_strength * self.news_sentiment_weight
+                    signals.append(('SELL', weighted_conf))
+                    reasons.append(f"뉴스: 부정 감정 {sentiment:.2f}")
 
             # 기술적 지표 신호
             if technical_analysis:
                 tech_signal = technical_analysis['signal']
                 if tech_signal['signal'] == 'BUY':
-                    signals.append(('BUY', tech_signal['confidence']))
+                    weighted_conf = tech_signal['confidence'] * self.aggressive_pattern_weight
+                    signals.append(('BUY', weighted_conf))
                     reasons.extend([f"기술적: {reason}" for reason in tech_signal['reasons']])
                 elif tech_signal['signal'] == 'SELL' and market in self.positions:
-                    signals.append(('SELL', tech_signal['confidence']))
+                    weighted_conf = tech_signal['confidence'] * self.aggressive_pattern_weight
+                    signals.append(('SELL', weighted_conf))
                     reasons.extend([f"기술적: {reason}" for reason in tech_signal['reasons']])
 
                 # 기술적 지표 상세 로그
@@ -592,6 +645,17 @@ class SmartHybridAI:
                 volume = technical_analysis['volume']
 
                 logger.info(f"📊 {market} 기술적 지표: RSI={rsi:.1f}, MACD={macd['histogram']:.4f}, 볼린저={bollinger['position']:.1f}%, 거래량={volume['volume_ratio']:.1f}x")
+
+            # 강화학습 신호 (적응형 학습)
+            if self.enable_adaptive_learning:
+                if rl_confidence > 0.5:
+                    weighted_conf = rl_confidence * self.adaptive_learning_weight
+                    signals.append(('BUY', weighted_conf))
+                    reasons.append(f"강화학습: 신뢰도 {rl_confidence:.2f}")
+                elif rl_confidence < 0.3 and market in self.positions:
+                    weighted_conf = (1.0 - rl_confidence) * self.adaptive_learning_weight
+                    signals.append(('SELL', weighted_conf))
+                    reasons.append(f"강화학습: 회피 {rl_confidence:.2f}")
 
             # 신호가 없으면 HOLD
             if not signals:
@@ -615,45 +679,11 @@ class SmartHybridAI:
             logger.error(f"신호 생성 실패 ({market}): {e}")
             return 'HOLD', 0.0, []
 
-    def collect_price_features_cached(self, market, ticker):
-        """캐시된 시세로 가격 특성 수집"""
-        try:
-            current_price = ticker.trade_price
-
-            # 히스토리에 추가
-            if market not in self.price_history:
-                self.price_history[market] = []
-
-            self.price_history[market].append({
-                'price': current_price,
-                'timestamp': datetime.now()
-            })
-
-            # 최근 100개만 유지
-            self.price_history[market] = self.price_history[market][-100:]
-
-            # 변화율 계산
-            if len(self.price_history[market]) >= 2:
-                prev_price = self.price_history[market][-2]['price']
-                change_rate = (current_price - prev_price) / prev_price * 100
-                return np.array([change_rate, current_price])
-            else:
-                return np.array([0.0, current_price])
-
-        except Exception as e:
-            logger.error(f"가격 특성 수집 실패 ({market}): {e}")
-            return np.array([])
-
-    def execute_smart_trade(self, market, signal, confidence, reasons):
-        """스마트 거래 실행"""
+    def execute_smart_trade(self, market, signal, confidence, reasons, current_price):
+        """스마트 거래 실행 - API 최적화 버전"""
         coin = market.split('-')[1]
 
         try:
-            ticker = self.upbit.GetTicker([market])
-            if not ticker:
-                return False
-
-            current_price = ticker[0].trade_price
 
             if signal == 'BUY' and market not in self.positions:
                 # 매수 실행
@@ -738,7 +768,7 @@ class SmartHybridAI:
         """리스크 관리"""
         for market, position in list(self.positions.items()):
             try:
-                ticker = self.upbit.GetTicker([market])
+                ticker = self.get_cached_ticker([market])
                 if not ticker:
                     continue
 
@@ -749,12 +779,12 @@ class SmartHybridAI:
                 # 손절매
                 if profit_pct <= -self.stop_loss_percentage:
                     logger.warning(f"🛑 {market} 손절매 발동: {profit_pct:.2f}%")
-                    self.execute_smart_trade(market, 'SELL', 1.0, ['손절매'])
+                    self.execute_smart_trade(market, 'SELL', 1.0, ['손절매'], current_price)
 
                 # 익절매
                 elif profit_pct >= self.take_profit_percentage:
                     logger.info(f"🎯 {market} 익절매 발동: +{profit_pct:.2f}%")
-                    self.execute_smart_trade(market, 'SELL', 1.0, ['익절매'])
+                    self.execute_smart_trade(market, 'SELL', 1.0, ['익절매'], current_price)
 
             except Exception as e:
                 logger.error(f"리스크 관리 오류 ({market}): {e}")
@@ -773,12 +803,12 @@ class SmartHybridAI:
                 # 손절매
                 if profit_pct <= -self.stop_loss_percentage:
                     logger.warning(f"🛑 {market} 손절매 발동: {profit_pct:.2f}%")
-                    self.execute_smart_trade(market, 'SELL', 1.0, ['손절매'])
+                    self.execute_smart_trade(market, 'SELL', 1.0, ['손절매'], current_price)
 
                 # 익절매
                 elif profit_pct >= self.take_profit_percentage:
                     logger.info(f"🎯 {market} 익절매 발동: +{profit_pct:.2f}%")
-                    self.execute_smart_trade(market, 'SELL', 1.0, ['익절매'])
+                    self.execute_smart_trade(market, 'SELL', 1.0, ['익절매'], current_price)
 
             except Exception as e:
                 logger.error(f"리스크 관리 오류 ({market}): {e}")
@@ -833,15 +863,16 @@ class SmartHybridAI:
             logger.info(f"이전 학습 상태 없음 또는 로드 실패: {e}")
 
     def load_existing_positions(self):
-        """기존 보유 코인을 포지션으로 자동 등록"""
+        """기존 보유 코인을 포지션으로 자동 등록 - API 최적화 버전"""
         try:
             accounts = self.upbit.GetAccountInfo()
             if not accounts:
                 logger.warning("❌ 계정 정보를 가져올 수 없습니다")
                 return
 
-            loaded_positions = 0
-            total_value = 0
+            # 보유 중인 대상 코인들 찾기
+            held_markets = []
+            account_data = {}
 
             for account in accounts:
                 currency = account['currency']
@@ -850,44 +881,65 @@ class SmartHybridAI:
                 # KRW는 제외하고, 잔고가 있는 코인만 처리
                 if currency != 'KRW' and balance > 0:
                     market = f'KRW-{currency}'
-
-                    # 대상 코인 목록에 있는 경우만 포지션으로 등록
                     if market in self.target_coins:
-                        try:
-                            # 실제 평균 매수가 사용
-                            avg_buy_price = float(account.get('avg_buy_price', 0))
+                        held_markets.append(market)
+                        account_data[market] = {
+                            'balance': balance,
+                            'avg_buy_price': float(account.get('avg_buy_price', 0))
+                        }
 
-                            # 현재 가격 조회
-                            ticker = self.upbit.GetTicker([market])
-                            if ticker and avg_buy_price > 0:
-                                current_price = ticker[0].trade_price
-                                position_value = balance * current_price
-
-                                # 실제 수익률 계산
-                                profit_pct = (current_price - avg_buy_price) / avg_buy_price * 100
-
-                                # 포지션으로 등록 (실제 평균 매수가 사용)
-                                self.positions[market] = {
-                                    'side': 'BUY',
-                                    'amount': balance,
-                                    'entry_price': avg_buy_price,  # 실제 평균 매수가 사용
-                                    'entry_time': datetime.now() - timedelta(days=1),  # 기존 보유로 가정
-                                    'reasons': ['기존 보유'],
-                                    'source': 'existing'  # 기존 보유 코인 표시
-                                }
-
-                                loaded_positions += 1
-                                total_value += position_value
-
-                                logger.info(f"📦 기존 포지션 등록: {market} ({balance:.8f}개, {avg_buy_price:,.0f}→{current_price:,.0f}원, {profit_pct:+.2f}%)")
-
-                        except Exception as e:
-                            logger.warning(f"⚠️  {market} 포지션 등록 실패: {e}")
-
-            if loaded_positions > 0:
-                logger.info(f"✅ 기존 보유 코인 {loaded_positions}개 포지션 등록 완료 (총 {total_value:,.0f}원)")
-            else:
+            if not held_markets:
                 logger.info("📝 기존 보유 코인이 없거나 대상 코인 아님")
+                return
+
+            # 배치로 현재 가격 조회 (API 최적화 + 캐싱)
+            try:
+                tickers = self.get_cached_ticker(held_markets)
+                if not tickers:
+                    logger.warning("⚠️  보유 코인 시세 조회 실패")
+                    return
+
+                ticker_data = {ticker.market: ticker for ticker in tickers}
+
+                loaded_positions = 0
+                total_value = 0
+
+                for market in held_markets:
+                    try:
+                        account_info = account_data[market]
+                        balance = account_info['balance']
+                        avg_buy_price = account_info['avg_buy_price']
+
+                        if market in ticker_data and avg_buy_price > 0:
+                            current_price = ticker_data[market].trade_price
+                            position_value = balance * current_price
+
+                            # 실제 수익률 계산
+                            profit_pct = (current_price - avg_buy_price) / avg_buy_price * 100
+
+                            # 포지션으로 등록 (실제 평균 매수가 사용)
+                            self.positions[market] = {
+                                'side': 'BUY',
+                                'amount': balance,
+                                'entry_price': avg_buy_price,  # 실제 평균 매수가 사용
+                                'entry_time': datetime.now() - timedelta(days=1),  # 기존 보유로 가정
+                                'reasons': ['기존 보유'],
+                                'source': 'existing'  # 기존 보유 코인 표시
+                            }
+
+                            loaded_positions += 1
+                            total_value += position_value
+
+                            logger.info(f"📦 기존 포지션 등록: {market} ({balance:.8f}개, {avg_buy_price:,.0f}→{current_price:,.0f}원, {profit_pct:+.2f}%)")
+
+                    except Exception as e:
+                        logger.warning(f"⚠️  {market} 포지션 등록 실패: {e}")
+
+                if loaded_positions > 0:
+                    logger.info(f"✅ 기존 보유 코인 {loaded_positions}개 포지션 등록 완료 (총 {total_value:,.0f}원)")
+
+            except Exception as e:
+                logger.error(f"보유 코인 시세 조회 실패: {e}")
 
         except Exception as e:
             logger.error(f"기존 포지션 로드 실패: {e}")
@@ -916,9 +968,9 @@ class SmartHybridAI:
                 # 1. 감정 데이터 업데이트 (30분마다)
                 self.update_sentiment_data()
 
-                # 2. 모든 코인 시세 한 번에 조회 (API 최적화)
+                # 2. 모든 코인 시세 한 번에 조회 (API 최적화 + 캐싱)
                 try:
-                    all_tickers = self.upbit.GetTicker(self.target_coins)
+                    all_tickers = self.get_cached_ticker(self.target_coins)
                     ticker_data = {ticker.market: ticker for ticker in all_tickers} if all_tickers else {}
 
                     if not ticker_data:
@@ -943,7 +995,7 @@ class SmartHybridAI:
 
                         if signal != 'HOLD':
                             logger.info(f"🎯 {market}: {signal} (신뢰도: {confidence:.2f})")
-                            self.execute_smart_trade(market, signal, confidence, reasons)
+                            self.execute_smart_trade(market, signal, confidence, reasons, ticker.trade_price)
                         else:
                             price = ticker.trade_price
                             logger.info(f"⏸️  {market}: HOLD (가격: {price:,}원)")
@@ -986,8 +1038,9 @@ class SmartHybridAI:
                     last_save_time = datetime.now()
 
                 # 6. 대기 (단타 최적화 - 10초 간격)
-                logger.info("⚡ 10초 대기 (단타 모드)...")
-                time.sleep(10)
+                cycle_interval = self.config.get('TRADING_CYCLE_SECONDS', 60)
+                logger.info(f"⚡ {cycle_interval}초 대기 (최적화 모드)...")
+                time.sleep(cycle_interval)
 
         except KeyboardInterrupt:
             logger.info("\n🛑 사용자에 의한 정지")
