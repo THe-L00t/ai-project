@@ -301,6 +301,19 @@ class SmartHybridAI:
         self.positions = {}
         self.last_news_update = datetime.now() - timedelta(hours=1)
 
+    def get_position_entry_time(self, position):
+        """포지션의 진입 시간을 안전하게 가져오기"""
+        return (position.get('entry_time') or
+                position.get('timestamp') or
+                datetime.now())
+
+    def normalize_position_fields(self):
+        """기존 포지션 필드를 표준화 - entry_time으로 통일"""
+        for market, position in self.positions.items():
+            if 'timestamp' in position and 'entry_time' not in position:
+                position['entry_time'] = position['timestamp']
+                del position['timestamp']
+
         # 예측 모델들
         self.prediction_models = {}
         self.scalers = {}
@@ -311,6 +324,9 @@ class SmartHybridAI:
 
         # 기존 보유 코인 자동 인식
         self.load_existing_positions()
+
+        # 포지션 필드 표준화
+        self.normalize_position_fields()
 
     def collect_price_features(self, market):
         """가격 특성 수집 (안정적 버전)"""
@@ -671,7 +687,7 @@ class SmartHybridAI:
                         'type': 'long',
                         'quantity': quantity,
                         'entry_price': current_price,
-                        'timestamp': datetime.now(),
+                        'entry_time': datetime.now(),
                         'conditions': {'confidence': confidence, 'reasons': reasons},
                         'context': {'sentiment': self.get_current_sentiment(coin)}
                     }
@@ -701,7 +717,7 @@ class SmartHybridAI:
 
                 # 강화학습에 결과 기록
                 entry_data_for_learning = {
-                    'timestamp': position['timestamp'],
+                    'timestamp': self.get_position_entry_time(position),
                     'price': position['entry_price'],
                     'conditions': position.get('conditions', {})
                 }
@@ -893,6 +909,9 @@ class SmartHybridAI:
             while True:
                 cycle_count += 1
                 logger.info(f"\n🔄 스마트 사이클 #{cycle_count}")
+
+                # 0. 포지션 필드 정규화 (안전성 확보)
+                self.normalize_position_fields()
 
                 # 1. 감정 데이터 업데이트 (30분마다)
                 self.update_sentiment_data()

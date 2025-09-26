@@ -110,7 +110,7 @@ class SimpleTradingBot:
                     'type': 'long',
                     'quantity': quantity,
                     'entry_price': price,
-                    'timestamp': datetime.now()
+                    'entry_time': datetime.now()
                 }
                 logger.info(f"📈 모의매수: {market} {quantity:.8f} @ {price:,}원 (총 {buy_amount:,.0f}원)")
                 return True
