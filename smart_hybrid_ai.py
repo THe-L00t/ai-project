@@ -881,7 +881,8 @@ class SmartHybridAI:
                 # KRW는 제외하고, 잔고가 있는 코인만 처리
                 if currency != 'KRW' and balance > 0:
                     market = f'KRW-{currency}'
-                    if market in self.target_coins:
+                    # 대상 코인 목록에 있거나 잔고가 의미있는 경우 포지션 등록
+                    if market in self.target_coins or balance * 100 > 1000:  # 최소 1000원 이상
                         held_markets.append(market)
                         account_data[market] = {
                             'balance': balance,
@@ -890,6 +891,13 @@ class SmartHybridAI:
 
             if not held_markets:
                 logger.info("📝 기존 보유 코인이 없거나 대상 코인 아님")
+                # 모든 계정 정보 로그 출력 (디버깅용)
+                logger.info("💰 전체 계정 정보:")
+                for account in accounts:
+                    currency = account['currency']
+                    balance = float(account['balance'])
+                    if balance > 0:
+                        logger.info(f"  {currency}: {balance:.8f}")
                 return
 
             # 배치로 현재 가격 조회 (API 최적화 + 캐싱)
@@ -1038,8 +1046,8 @@ class SmartHybridAI:
                     last_save_time = datetime.now()
 
                 # 6. 대기 (단타 최적화 - 10초 간격)
-                cycle_interval = self.config.get('TRADING_CYCLE_SECONDS', 60)
-                logger.info(f"⚡ {cycle_interval}초 대기 (최적화 모드)...")
+                cycle_interval = self.config.get('TRADING_CYCLE_SECONDS', 10)
+                logger.info(f"⚡ {cycle_interval}초 대기 (단타 모드)...")
                 time.sleep(cycle_interval)
 
         except KeyboardInterrupt:

@@ -47,9 +47,9 @@ MOMENTUM_THRESHOLD = 0.5
 
 ### 매매 사이클 간격 (초)
 ```
-TRADING_CYCLE_SECONDS = 60
+TRADING_CYCLE_SECONDS = 10
 ```
-*설명: 매매 신호 확인 주기 (60초마다 체크) - API 안정성 개선*
+*설명: 매매 신호 확인 주기 (10초마다 체크) - 단타 최적화*
 
 ### 뉴스 수집 간격 (사이클)
 ```
