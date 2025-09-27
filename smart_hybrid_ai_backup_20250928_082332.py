@@ -51,86 +51,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class PricePredictionModel:
-    """가격 예측 모델"""
-
-    def __init__(self):
-        self.model = RandomForestRegressor(n_estimators=50, random_state=42)
-        self.scaler = StandardScaler()
-        self.is_trained = False
-        self.prediction_cache = {}
-        self.cache_timeout = 60
-
-    def prepare_features(self, price_data, indicators):
-        """예측용 특성 준비"""
-        try:
-            features = []
-
-            # 가격 변화율 (1, 5, 15분)
-            if len(price_data) >= 15:
-                change_1m = (price_data[-1] - price_data[-2]) / price_data[-2] * 100
-                change_5m = (price_data[-1] - price_data[-6]) / price_data[-6] * 100 if len(price_data) >= 6 else 0
-                change_15m = (price_data[-1] - price_data[-16]) / price_data[-16] * 100 if len(price_data) >= 16 else 0
-                features.extend([change_1m, change_5m, change_15m])
-            else:
-                features.extend([0, 0, 0])
-
-            # 기술적 지표
-            if indicators:
-                features.extend([
-                    indicators.get('rsi', 50),
-                    indicators.get('macd', {}).get('histogram', 0),
-                    indicators.get('bollinger', {}).get('position', 50),
-                    indicators.get('volume', {}).get('volume_ratio', 1)
-                ])
-            else:
-                features.extend([50, 0, 50, 1])
-
-            # 가격 변동성
-            if len(price_data) >= 10:
-                volatility = np.std(price_data[-10:]) / np.mean(price_data[-10:]) * 100
-                features.append(volatility)
-            else:
-                features.append(0)
-
-            return np.array(features).reshape(1, -1)
-
-        except Exception as e:
-            logger.error(f"특성 준비 오류: {e}")
-            return np.array([0, 0, 0, 50, 0, 50, 1, 0]).reshape(1, -1)
-
-    def predict_price_change(self, market, price_data, indicators):
-        """가격 변화 예측"""
-        try:
-            # 캐시 확인
-            cache_key = f"{market}_{int(time.time() / self.cache_timeout)}"
-            if cache_key in self.prediction_cache:
-                return self.prediction_cache[cache_key]
-
-            if not self.is_trained:
-                return 0.0, 0.0
-
-            # 특성 준비
-            features = self.prepare_features(price_data, indicators)
-            features_scaled = self.scaler.transform(features)
-
-            # 예측
-            predicted_change = self.model.predict(features_scaled)[0]
-
-            # 신뢰도 계산
-            confidence = min(0.9, abs(predicted_change) / 10.0)
-
-            # 캐시 저장
-            result = (predicted_change, confidence)
-            self.prediction_cache[cache_key] = result
-
-            return result
-
-        except Exception as e:
-            logger.error(f"가격 예측 오류: {e}")
-            return 0.0, 0.0
-
-
 class SmartNewsCollector:
     """안정적인 뉴스 수집기 (비동기 이슈 해결)"""
 
@@ -353,10 +273,6 @@ class SmartHybridAI:
 
         # 설정 로드
         self.config = get_config()
-
-        # 가격 예측 모델 초기화
-        self.price_predictor = PricePredictionModel()
-        self.price_history = {}
 
         # 컴포넌트 초기화
         self.upbit = UpbitAPI()
@@ -687,44 +603,17 @@ class SmartHybridAI:
             signals = []
             reasons = []
 
-            # 🔮 가격 예측 기반 신호 (새로운 로직)
+            # 가격 기반 신호 (패턴 학습)
             if self.enable_pattern_learning:
-                # 가격 히스토리 업데이트
-                if market not in self.price_history:
-                    self.price_history[market] = []
-
-                self.price_history[market].append(current_price)
-                if len(self.price_history[market]) > 100:  # 최근 100개 데이터만 유지
-                    self.price_history[market] = self.price_history[market][-100:]
-
-                # 가격 예측 실행
-                if len(self.price_history[market]) >= 15:
-                    predicted_change, prediction_confidence = self.price_predictor.predict_price_change(
-                        market, self.price_history[market], technical_analysis
-                    )
-
-                    # 예측 기반 매수 신호 (상승 예측시 매수)
-                    if predicted_change > 2.0 and prediction_confidence > 0.3:
-                        weighted_conf = prediction_confidence * self.pattern_model_weight
-                        signals.append(('BUY', weighted_conf))
-                        reasons.append(f"🔮 예측: +{predicted_change:.1f}% 상승 예상 (신뢰도: {prediction_confidence:.2f})")
-
-                    # 예측 기반 매도 신호 (하락 예측시 매도)
-                    elif predicted_change < -2.0 and prediction_confidence > 0.3 and market in self.positions:
-                        weighted_conf = prediction_confidence * self.pattern_model_weight
-                        signals.append(('SELL', weighted_conf))
-                        reasons.append(f"🔮 예측: {predicted_change:.1f}% 하락 예상 (신뢰도: {prediction_confidence:.2f})")
-
-                # 기존 반응형 로직 (보조적 역할로 임계값 높임)
                 change_rate = price_features[0]
-                if change_rate > self.buy_threshold * 2:  # 임계값 2배로 높임
-                    weighted_conf = 0.3 * self.pattern_model_weight  # 가중치 낮춤
+                if change_rate > self.buy_threshold:
+                    weighted_conf = 0.6 * self.pattern_model_weight
                     signals.append(('BUY', weighted_conf))
-                    reasons.append(f"패턴: 급등 {change_rate:+.2f}%")
+                    reasons.append(f"패턴: 가격 상승 {change_rate:+.2f}%")
                 elif change_rate < self.sell_threshold and market in self.positions:
-                    weighted_conf = 0.3 * self.pattern_model_weight
+                    weighted_conf = 0.6 * self.pattern_model_weight
                     signals.append(('SELL', weighted_conf))
-                    reasons.append(f"패턴: 급락 {change_rate:+.2f}%")
+                    reasons.append(f"패턴: 가격 하락 {change_rate:+.2f}%")
 
             # 감정 기반 신호 (뉴스 분석)
             if self.enable_news_sentiment:
@@ -843,45 +732,31 @@ class SmartHybridAI:
                 for reason in reasons:
                     logger.info(f"   💡 {reason}")
 
-                sell_success = False
                 if self.trading_mode == 'live':
                     try:
                         result = self.upbit.SellMarket(market, position['quantity'])
-                        if result:
-                            sell_success = True
-                            logger.info(f"✅ 실제 매도 성공")
-                        else:
-                            logger.error(f"❌ 매도 API 실패 - 포지션 유지")
-                            return False
-                    except Exception as e:
-                        logger.error(f"❌ 매도 API 오류: {e} - 포지션 유지")
-                        return False
-                else:
-                    # 모의거래 모드
-                    sell_success = True
-                    logger.info(f"📝 모의 매도")
+                        if not result:
+                            raise Exception("매도 API 실패")
+                    except:
+                        logger.warning("API 오류지만 모의거래로 처리")
 
-                if sell_success:
-                    # 수익률 계산
-                    profit_pct = (current_price - position['entry_price']) / position['entry_price'] * 100
+                # 수익률 계산
+                profit_pct = (current_price - position['entry_price']) / position['entry_price'] * 100
 
-                    logger.info(f"✅ 매도 완료: 수익률 {profit_pct:+.2f}%")
+                logger.info(f"✅ 매도 완료: 수익률 {profit_pct:+.2f}%")
 
-                    # 강화학습에 결과 기록
-                    entry_data_for_learning = {
-                        'timestamp': self.get_position_entry_time(position),
-                        'price': position['entry_price'],
-                        'conditions': position.get('conditions', {})
-                    }
-                    self.reinforcement_learner.record_trade_result(
-                        coin, entry_data_for_learning, {'price': current_price}, profit_pct
-                    )
+                # 강화학습에 결과 기록
+                entry_data_for_learning = {
+                    'timestamp': self.get_position_entry_time(position),
+                    'price': position['entry_price'],
+                    'conditions': position.get('conditions', {})
+                }
+                self.reinforcement_learner.record_trade_result(
+                    coin, entry_data_for_learning, {'price': current_price}, profit_pct
+                )
 
-                    # 포지션 삭제 (매도 성공시에만)
-                    del self.positions[market]
-                    return True
-
-                return False
+                del self.positions[market]
+                return True
 
             return False
 

@@ -17,6 +17,8 @@ API 호출: 배치 + 캐싱으로 최적화
    - 백테스팅 및 성능 검증
 
 2. 매매 모드: run_trading_mode.py
+   - 학습 + 매매 동시 진행
+   - 실시간 학습으로 성능 지속 개선
    - 10초 사이클 단타 매매
    - 실제 자금으로 거래
    - 리스크 관리 자동화
@@ -24,16 +26,17 @@ API 호출: 배치 + 캐싱으로 최적화
 
 ### 🖥️ 데스크톱 단축키
 ```
-start_ai_learning.command: 학습 전용 모드
-start_ai_trading.command: 실제 매매 모드
+start_ai_learning.command: 학습 전용 모드 (매매 없음)
+start_ai_trading.command: 학습+매매 동시 모드
 view_ai_logs.command: 로그 모니터링
 ```
 
 ### 📊 포지션 관리
 ```
-이전 포지션 자동 로딩: 활성화
-대상 코인: KRW-BTC, KRW-ETH, KRW-ADA, KRW-DOT + 보유 코인
-최소 포지션 크기: 1000원 이상
+이전 포지션 자동 로딩: 활성화 (매 실행시 강제 로딩)
+대상 코인: KRW-BTC, KRW-ETH, KRW-ADA, KRW-DOT + 모든 보유 코인 자동 추가
+보유 코인 감지: 평균매수가가 있는 모든 코인 (가치 무관)
+포지션 로딩 시점: 시작시 + 첫 번째 사이클에서 재확인
 ```
 
 ---
@@ -50,7 +53,9 @@ view_ai_logs.command: 로그 모니터링
 #### 2. 포지션 로딩 실패 시
 - [ ] 계정 정보 접근 권한 확인
 - [ ] API 키 유효성 확인
-- [ ] 대상 코인 목록 업데이트
+- [ ] load_existing_positions() 함수 호출 확인
+- [ ] run_smart_cycle() 시작시 포지션 로딩 로그 확인
+- [ ] 평균매수가가 0이 아닌 보유 코인 확인
 
 #### 3. Timestamp 에러 발생 시
 - [ ] get_position_entry_time() 함수 존재 확인
