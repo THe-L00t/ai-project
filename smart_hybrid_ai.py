@@ -407,6 +407,16 @@ class SmartHybridAI:
 
         # AI 학습 기능 설정
         self.enable_adaptive_learning = self.config.get('ENABLE_ADAPTIVE_LEARNING', True)
+
+        # 고도화된 매수 타이밍 알고리즘 초기화
+        try:
+            from src.analysis.AdvancedEntrySignalEngine import AdvancedEntrySignalEngine
+            self.advanced_entry_engine = AdvancedEntrySignalEngine(self.upbit, self.config)
+            self.enable_advanced_entry = True
+            logger.info("✅ 고도화된 매수 타이밍 알고리즘 통합 완료")
+        except ImportError as e:
+            logger.warning(f"⚠️ 고도화된 매수 알고리즘 로드 실패: {e}")
+            self.enable_advanced_entry = False
         self.enable_news_sentiment = self.config.get('ENABLE_NEWS_SENTIMENT', True)
         self.enable_pattern_learning = self.config.get('ENABLE_PATTERN_LEARNING', True)
 
@@ -730,7 +740,43 @@ class SmartHybridAI:
             signals = []
             reasons = []
 
-            # 🔮 가격 예측 기반 신호 (1분봉 캔들 데이터 사용)
+            # 🚀 고도화된 매수 타이밍 알고리즘 (최우선)
+            if self.enable_advanced_entry and hasattr(self, 'advanced_entry_engine'):
+                try:
+                    # 고도화된 매수 신호 생성
+                    market_data = {
+                        'trade_price': ticker.trade_price,
+                        'timestamp': time.time(),
+                        'volume': getattr(ticker, 'acc_trade_volume_24h', 0)
+                    }
+
+                    # 동기 버전 사용 (기존 시스템과 호환성)
+                    advanced_signal = self.advanced_entry_engine.generate_buy_signal_sync(market, market_data)
+
+                    if advanced_signal and advanced_signal.action == 'BUY':
+                        # 고도화된 신호가 매수를 권장하는 경우
+                        weighted_conf = advanced_signal.confidence / 100 * 0.8  # 80% 가중치
+                        signals.append(('BUY', weighted_conf))
+
+                        advanced_reasons = '; '.join(advanced_signal.reasoning[:2])  # 상위 2개 근거만
+                        reasons.append(f"🚀 고도화 알고리즘: {advanced_reasons} (신뢰도: {advanced_signal.confidence:.1f}%)")
+
+                        # 고도화된 알고리즘의 손익 정보 활용
+                        if hasattr(self, 'current_entry_info'):
+                            self.current_entry_info[market] = {
+                                'stop_loss': advanced_signal.stop_loss,
+                                'take_profit': advanced_signal.take_profit,
+                                'position_size': advanced_signal.position_size,
+                                'risk_reward': advanced_signal.risk_reward_ratio
+                            }
+
+                        logger.info(f"🚀 {market} 고도화 매수 신호: {advanced_signal.confidence:.1f}% - {advanced_reasons}")
+
+                except Exception as e:
+                    logger.warning(f"⚠️ 고도화된 매수 알고리즘 실행 실패: {e}")
+                    # 실패시 기존 로직으로 폴백
+
+            # 🔮 기존 가격 예측 기반 신호 (보조 역할)
             if self.enable_pattern_learning:
                 # 현재가 추출
                 current_price = ticker.trade_price
@@ -774,28 +820,28 @@ class SmartHybridAI:
                     else:
                         predicted_change, prediction_confidence = 0.0, 0.0
 
-                    # 예측 기반 매수 신호 (상승 예측시 매수)
-                    if predicted_change > 2.0 and prediction_confidence > 0.3:
-                        weighted_conf = prediction_confidence * self.pattern_model_weight
-                        signals.append(('BUY', weighted_conf))
-                        reasons.append(f"🔮 예측: +{predicted_change:.1f}% 상승 예상 (신뢰도: {prediction_confidence:.2f})")
-
-                    # 예측 기반 매도 신호 (하락 예측시 매도)
-                    elif predicted_change < -2.0 and prediction_confidence > 0.3 and market in self.positions:
-                        weighted_conf = prediction_confidence * self.pattern_model_weight
-                        signals.append(('SELL', weighted_conf))
-                        reasons.append(f"🔮 예측: {predicted_change:.1f}% 하락 예상 (신뢰도: {prediction_confidence:.2f})")
-
-                # 기존 반응형 로직 (보조적 역할로 임계값 높임)
-                change_rate = price_features[0]
-                if change_rate > self.buy_threshold * 2:  # 임계값 2배로 높임
-                    weighted_conf = 0.3 * self.pattern_model_weight  # 가중치 낮춤
+                # 예측 기반 매수 신호 (기존 로직, 낮은 가중치)
+                if predicted_change > 2.0 and prediction_confidence > 0.3:
+                    weighted_conf = prediction_confidence * self.pattern_model_weight * 0.5  # 가중치 절반으로 축소
                     signals.append(('BUY', weighted_conf))
-                    reasons.append(f"패턴: 급등 {change_rate:+.2f}%")
+                    reasons.append(f"🔮 기존예측: +{predicted_change:.1f}% 상승 예상")
+
+                # 예측 기반 매도 신호
+                elif predicted_change < -2.0 and prediction_confidence > 0.3 and market in self.positions:
+                    weighted_conf = prediction_confidence * self.pattern_model_weight * 0.5
+                    signals.append(('SELL', weighted_conf))
+                    reasons.append(f"🔮 기존예측: {predicted_change:.1f}% 하락 예상")
+
+                # 기존 반응형 로직 (최후 보조 수단)
+                change_rate = price_features[0]
+                if change_rate > self.buy_threshold * 3:  # 임계값 3배로 높임 (극단적 급등시만)
+                    weighted_conf = 0.2 * self.pattern_model_weight  # 가중치 더욱 낮춤
+                    signals.append(('BUY', weighted_conf))
+                    reasons.append(f"긴급: 극단적 급등 {change_rate:+.2f}%")
                 elif change_rate < self.sell_threshold and market in self.positions:
                     weighted_conf = 0.3 * self.pattern_model_weight
                     signals.append(('SELL', weighted_conf))
-                    reasons.append(f"패턴: 급락 {change_rate:+.2f}%")
+                    reasons.append(f"반응형: 급락 {change_rate:+.2f}%")
 
             # 감정 기반 신호 (뉴스 분석)
             if self.enable_news_sentiment:

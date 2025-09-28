@@ -97,6 +97,44 @@ ENABLE_PATTERN_LEARNING = True
 ```
 *설명: True = 패턴 학습 켜기, False = 끄기*
 
+## 🚀 고도화된 매수 타이밍 알고리즘
+
+### 고도화된 매수 알고리즘 활성화
+```
+ENABLE_ADVANCED_ENTRY = True
+```
+*설명: True = 고도화된 매수 타이밍 알고리즘 켜기, False = 기존 로직만 사용*
+
+### 고도화 알고리즘 신뢰도 임계값 (60-90)
+```
+ADVANCED_ENTRY_MIN_CONFIDENCE = 70
+```
+*설명: 고도화된 알고리즘이 이 신뢰도 이상일 때만 매수 신호 생성*
+
+### RSI 과매도 기준 (20-30)
+```
+RSI_OVERSOLD_THRESHOLD = 25
+```
+*설명: RSI가 이 값 이하일 때 과매도 상태로 판단*
+
+### RSI 과매수 기준 (70-80)
+```
+RSI_OVERBOUGHT_THRESHOLD = 75
+```
+*설명: RSI가 이 값 이상일 때 과매수 상태로 판단*
+
+### 거래량 급증 기준 (2.0-5.0)
+```
+VOLUME_SPIKE_MULTIPLIER = 2.5
+```
+*설명: 평균 거래량의 몇 배 이상일 때 급증으로 판단*
+
+### 볼린저 밴드 스퀴즈 기준 (0.6-0.9)
+```
+BOLLINGER_SQUEEZE_RATIO = 0.8
+```
+*설명: 밴드폭이 평균의 몇 배 이하일 때 스퀴즈로 판단*
+
 ### 최소 신뢰도 임계값 (0.1 ~ 0.9)
 ```
 MIN_CONFIDENCE_THRESHOLD = 0.8
