@@ -61,19 +61,36 @@ class PricePredictionModel:
         self.prediction_cache = {}
         self.cache_timeout = 60
 
-    def prepare_features(self, price_data, indicators):
-        """예측용 특성 준비"""
+    def prepare_features(self, candle_data, indicators):
+        """예측용 특성 준비 (1분봉 캔들 데이터 사용)"""
         try:
             features = []
 
-            # 가격 변화율 (1, 5, 15분)
-            if len(price_data) >= 15:
-                change_1m = (price_data[-1] - price_data[-2]) / price_data[-2] * 100
-                change_5m = (price_data[-1] - price_data[-6]) / price_data[-6] * 100 if len(price_data) >= 6 else 0
-                change_15m = (price_data[-1] - price_data[-16]) / price_data[-16] * 100 if len(price_data) >= 16 else 0
+            if len(candle_data) >= 15:
+                # 1분봉 캔들 데이터에서 종가 추출
+                closes = [candle['trade_price'] for candle in candle_data]
+
+                # 가격 변화율 (1, 5, 15분)
+                change_1m = (closes[-1] - closes[-2]) / closes[-2] * 100
+                change_5m = (closes[-1] - closes[-6]) / closes[-6] * 100 if len(closes) >= 6 else 0
+                change_15m = (closes[-1] - closes[-16]) / closes[-16] * 100 if len(closes) >= 16 else 0
                 features.extend([change_1m, change_5m, change_15m])
+
+                # 캔들 패턴 특성 추가
+                if len(candle_data) >= 3:
+                    latest = candle_data[-1]
+                    # 캔들 몸통 크기 (시가 대비 종가)
+                    body_size = abs(latest['trade_price'] - latest['opening_price']) / latest['opening_price'] * 100
+                    # 상승/하락 여부
+                    direction = 1 if latest['trade_price'] > latest['opening_price'] else -1
+                    # 고저차 (고가 대비 저가)
+                    high_low_ratio = (latest['high_price'] - latest['low_price']) / latest['high_price'] * 100
+
+                    features.extend([body_size, direction, high_low_ratio])
+                else:
+                    features.extend([0, 0, 0])
             else:
-                features.extend([0, 0, 0])
+                features.extend([0, 0, 0, 0, 0, 0])
 
             # 기술적 지표
             if indicators:
@@ -86,9 +103,10 @@ class PricePredictionModel:
             else:
                 features.extend([50, 0, 50, 1])
 
-            # 가격 변동성
-            if len(price_data) >= 10:
-                volatility = np.std(price_data[-10:]) / np.mean(price_data[-10:]) * 100
+            # 가격 변동성 (1분봉 기준)
+            if len(candle_data) >= 10:
+                closes = [candle['trade_price'] for candle in candle_data[-10:]]
+                volatility = np.std(closes) / np.mean(closes) * 100
                 features.append(volatility)
             else:
                 features.append(0)
@@ -97,10 +115,10 @@ class PricePredictionModel:
 
         except Exception as e:
             logger.error(f"특성 준비 오류: {e}")
-            return np.array([0, 0, 0, 50, 0, 50, 1, 0]).reshape(1, -1)
+            return np.array([0, 0, 0, 0, 0, 0, 50, 0, 50, 1, 0]).reshape(1, -1)
 
-    def predict_price_change(self, market, price_data, indicators):
-        """가격 변화 예측"""
+    def predict_price_change(self, market, candle_data, indicators):
+        """가격 변화 예측 (1분봉 캔들 데이터 사용)"""
         try:
             # 캐시 확인
             cache_key = f"{market}_{int(time.time() / self.cache_timeout)}"
@@ -110,15 +128,25 @@ class PricePredictionModel:
             if not self.is_trained:
                 return 0.0, 0.0
 
-            # 특성 준비
-            features = self.prepare_features(price_data, indicators)
+            # 특성 준비 (1분봉 캔들 데이터 사용)
+            features = self.prepare_features(candle_data, indicators)
             features_scaled = self.scaler.transform(features)
 
             # 예측
             predicted_change = self.model.predict(features_scaled)[0]
 
-            # 신뢰도 계산
-            confidence = min(0.9, abs(predicted_change) / 10.0)
+            # 신뢰도 계산 (캔들 패턴 고려)
+            base_confidence = min(0.9, abs(predicted_change) / 10.0)
+
+            # 캔들 패턴 신뢰도 보정
+            if len(candle_data) >= 3:
+                latest = candle_data[-1]
+                volume_factor = min(2.0, latest.get('candle_acc_trade_volume', 1) / 1000000)  # 거래량 고려
+                confidence = base_confidence * min(1.5, volume_factor)
+            else:
+                confidence = base_confidence
+
+            confidence = min(0.95, confidence)  # 최대 95%
 
             # 캐시 저장
             result = (predicted_change, confidence)
@@ -357,6 +385,7 @@ class SmartHybridAI:
         # 가격 예측 모델 초기화
         self.price_predictor = PricePredictionModel()
         self.price_history = {}
+        self.candle_history = {}  # 1분봉 캔들 데이터
 
         # 컴포넌트 초기화
         self.upbit = UpbitAPI()
@@ -447,6 +476,7 @@ class SmartHybridAI:
         logger.info("🚀 스마트 하이브리드 AI 초기화 완료")
         logger.info(f"💪 모드: {self.trading_mode}, 포지션: {self.max_position_size*100}%")
         logger.info(f"⚙️  설정: 손절{self.stop_loss_percentage}% | 익절{self.take_profit_percentage}% | 매수{self.buy_threshold}% | 매도{self.sell_threshold}%")
+        logger.info("📊 예측 방식: 1분봉 캔들 데이터 + 실시간 보조")
 
         # 기존 보유 코인 자동 인식
         self.load_existing_positions()
@@ -460,6 +490,10 @@ class SmartHybridAI:
             # ticker_data가 제공되면 사용, 없으면 캐시에서 조회
             if ticker_data and market in ticker_data:
                 price_data = ticker_data[market]
+                # 타입 검증
+                if not hasattr(price_data, 'trade_price'):
+                    logger.error(f"가격 데이터 타입 오류: {type(price_data)} - {price_data}")
+                    return np.array([])
             else:
                 ticker = self.get_cached_ticker([market])
                 if not ticker:
@@ -467,11 +501,20 @@ class SmartHybridAI:
                 price_data = ticker[0]
             coin = market.split('-')[1]
 
+            # 안전한 속성 접근
+            try:
+                change_rate = getattr(price_data, 'change_rate', 0.0)
+                trade_price = getattr(price_data, 'trade_price', 0.0)
+                acc_volume = getattr(price_data, 'acc_trade_volume_24h', 0.0)
+            except Exception as e:
+                logger.error(f"가격 데이터 속성 접근 오류: {e} - {type(price_data)}")
+                return np.array([])
+
             # 기본 특성
             features = [
-                float(price_data.change_rate) * 100,  # 변동률
-                float(price_data.trade_price) / 1000000,  # 정규화된 가격
-                float(price_data.acc_trade_volume_24h) / 1000000000,  # 정규화된 거래량
+                float(change_rate) * 100,  # 변동률
+                float(trade_price) / 1000000,  # 정규화된 가격
+                float(acc_volume) / 1000000000,  # 정규화된 거래량
             ]
 
             # 가격 히스토리 관리
@@ -479,9 +522,9 @@ class SmartHybridAI:
                 self.price_history[market] = deque(maxlen=20)
 
             self.price_history[market].append({
-                'price': float(price_data.trade_price),
-                'change': float(price_data.change_rate) * 100,
-                'volume': float(price_data.acc_trade_volume_24h),
+                'price': float(trade_price),
+                'change': float(change_rate) * 100,
+                'volume': float(acc_volume),
                 'timestamp': datetime.now()
             })
 
@@ -687,21 +730,49 @@ class SmartHybridAI:
             signals = []
             reasons = []
 
-            # 🔮 가격 예측 기반 신호 (새로운 로직)
+            # 🔮 가격 예측 기반 신호 (1분봉 캔들 데이터 사용)
             if self.enable_pattern_learning:
-                # 가격 히스토리 업데이트
-                if market not in self.price_history:
-                    self.price_history[market] = []
+                # 현재가 추출
+                current_price = ticker.trade_price
 
-                self.price_history[market].append(current_price)
-                if len(self.price_history[market]) > 100:  # 최근 100개 데이터만 유지
-                    self.price_history[market] = self.price_history[market][-100:]
+                # 1분봉 캔들 데이터 수집 (1분마다 갱신)
+                current_minute = int(time.time() / 60)
+                cache_key = f"{market}_candle_{current_minute}"
+
+                if cache_key not in self.candle_history:
+                    # 1분봉 데이터 조회 (최근 50개)
+                    candle_data = self.upbit.GetMinuteCandles(market, 50)
+                    if candle_data:
+                        self.candle_history[cache_key] = candle_data
+                        logger.debug(f"📊 {market} 1분봉 데이터 갱신: {len(candle_data)}개")
+                    else:
+                        # 1분봉 데이터가 없으면 실시간 데이터로 대체
+                        if market not in self.price_history:
+                            self.price_history[market] = []
+                        self.price_history[market].append(current_price)
+                        if len(self.price_history[market]) > 50:
+                            self.price_history[market] = self.price_history[market][-50:]
 
                 # 가격 예측 실행
-                if len(self.price_history[market]) >= 15:
-                    predicted_change, prediction_confidence = self.price_predictor.predict_price_change(
-                        market, self.price_history[market], technical_analysis
-                    )
+                if cache_key in self.candle_history:
+                    candle_data = self.candle_history[cache_key]
+                    if len(candle_data) >= 15:
+                        predicted_change, prediction_confidence = self.price_predictor.predict_price_change(
+                            market, candle_data, technical_analysis
+                        )
+                    else:
+                        predicted_change, prediction_confidence = 0.0, 0.0
+                else:
+                    # 실시간 데이터 폴백
+                    if market in self.price_history and len(self.price_history[market]) >= 15:
+                        # 실시간 데이터를 캔들 형태로 변환
+                        fake_candles = [{'trade_price': p, 'opening_price': p, 'high_price': p, 'low_price': p}
+                                       for p in self.price_history[market]]
+                        predicted_change, prediction_confidence = self.price_predictor.predict_price_change(
+                            market, fake_candles, technical_analysis
+                        )
+                    else:
+                        predicted_change, prediction_confidence = 0.0, 0.0
 
                     # 예측 기반 매수 신호 (상승 예측시 매수)
                     if predicted_change > 2.0 and prediction_confidence > 0.3:
@@ -843,23 +914,48 @@ class SmartHybridAI:
                 for reason in reasons:
                     logger.info(f"   💡 {reason}")
 
+                # 수량 추출 (quantity 또는 amount 키 지원)
+                sell_quantity = position.get('quantity') or position.get('amount')
+                if not sell_quantity:
+                    logger.error(f"❌ 매도 수량 정보 없음 - 포지션 유지")
+                    return False
+
+                # 최소 주문 금액 검증 (5,000원)
+                estimated_value = sell_quantity * current_price
+                min_order_amount = 5000
+
+                if estimated_value < min_order_amount:
+                    logger.warning(f"⚠️  {market} 매도 금액 부족: {estimated_value:,.0f}원 < {min_order_amount:,}원")
+                    logger.warning(f"   소량 보유로 매도 불가 - 포지션 관리에서 제외")
+
+                    # 소액 포지션은 포지션 목록에서 제거 (더 이상 관리하지 않음)
+                    if estimated_value < 100:  # 100원 미만은 완전히 제거
+                        logger.info(f"🗑️  {market} 소액 포지션 제거: {estimated_value:,.0f}원")
+                        del self.positions[market]
+
+                    return False
+
                 sell_success = False
                 if self.trading_mode == 'live':
                     try:
-                        result = self.upbit.SellMarket(market, position['quantity'])
+                        result = self.upbit.SellMarket(market, sell_quantity)
                         if result:
                             sell_success = True
-                            logger.info(f"✅ 실제 매도 성공")
+                            logger.info(f"✅ 실제 매도 성공: {sell_quantity:.8f} (약 {estimated_value:,.0f}원)")
                         else:
                             logger.error(f"❌ 매도 API 실패 - 포지션 유지")
                             return False
                     except Exception as e:
-                        logger.error(f"❌ 매도 API 오류: {e} - 포지션 유지")
+                        error_msg = str(e)
+                        if "under_min_total" in error_msg:
+                            logger.warning(f"⚠️  {market} 최소 주문 금액 미달 - 포지션 유지")
+                        else:
+                            logger.error(f"❌ 매도 API 오류: {e} - 포지션 유지")
                         return False
                 else:
                     # 모의거래 모드
                     sell_success = True
-                    logger.info(f"📝 모의 매도")
+                    logger.info(f"📝 모의 매도: {sell_quantity:.8f} (약 {estimated_value:,.0f}원)")
 
                 if sell_success:
                     # 수익률 계산
@@ -1054,14 +1150,21 @@ class SmartHybridAI:
                             # 실제 수익률 계산
                             profit_pct = (current_price - avg_buy_price) / avg_buy_price * 100
 
+                            # 최소 금액 검증 (5,000원 미만은 포지션 관리에서 제외)
+                            if position_value < 5000:
+                                logger.warning(f"⚠️  {market} 소액 포지션 스킵: {position_value:,.0f}원 < 5,000원")
+                                if position_value < 100:  # 100원 미만은 완전 무시
+                                    logger.info(f"🗑️  {market} 극소액 보유량 무시: {position_value:,.0f}원")
+                                continue
+
                             # 포지션으로 등록 (실제 평균 매수가 사용)
                             self.positions[market] = {
-                                'side': 'BUY',
-                                'amount': balance,
+                                'type': 'long',
+                                'quantity': balance,  # quantity 키로 통일
                                 'entry_price': avg_buy_price,  # 실제 평균 매수가 사용
                                 'entry_time': datetime.now() - timedelta(days=1),  # 기존 보유로 가정
-                                'reasons': ['기존 보유'],
-                                'source': 'existing'  # 기존 보유 코인 표시
+                                'conditions': {'confidence': 0.5, 'reasons': ['기존 보유']},
+                                'context': {'source': 'existing'}  # 기존 보유 코인 표시
                             }
 
                             loaded_positions += 1
@@ -1116,6 +1219,15 @@ class SmartHybridAI:
 
                 # 0. 포지션 필드 정규화 (안전성 확보)
                 self.normalize_position_fields()
+
+                # 0.3. 캔들 히스토리 캐시 정리 (메모리 최적화)
+                current_minute = int(time.time() / 60)
+                expired_keys = [key for key in self.candle_history.keys()
+                              if int(key.split('_')[-1]) < current_minute - 5]  # 5분 이전 데이터 삭제
+                for key in expired_keys:
+                    del self.candle_history[key]
+                if expired_keys:
+                    logger.debug(f"🧹 만료된 캔들 캐시 정리: {len(expired_keys)}개")
 
                 # 0.5. 첫 번째 사이클에서 포지션 재로딩 확인
                 if cycle_count == 1 and not self.positions:
@@ -1172,14 +1284,17 @@ class SmartHybridAI:
                             if market in ticker_data:
                                 current_price = ticker_data[market].trade_price
                                 profit_pct = (current_price - pos['entry_price']) / pos['entry_price'] * 100
-                                position_value = pos['amount'] * current_price
+
+                                # 수량 추출 (quantity 또는 amount 키 지원)
+                                quantity = pos.get('quantity') or pos.get('amount', 0)
+                                position_value = quantity * current_price
                                 total_position_value += position_value
 
                                 duration = datetime.now() - pos['entry_time']
                                 duration_str = f"{duration.days}d {duration.seconds//3600}h" if duration.days > 0 else f"{duration.seconds//3600}h {(duration.seconds%3600)//60}m"
 
-                                source_indicator = "🔄" if pos.get('source') == 'existing' else "🆕"
-                                logger.info(f"   {source_indicator} {market}: {pos['amount']:.8f}개 ({profit_pct:+.2f}%, {position_value:,.0f}원, {duration_str})")
+                                source_indicator = "🔄" if pos.get('context', {}).get('source') == 'existing' else "🆕"
+                                logger.info(f"   {source_indicator} {market}: {quantity:.8f}개 ({profit_pct:+.2f}%, {position_value:,.0f}원, {duration_str})")
                             else:
                                 logger.warning(f"   {market}: 시세 데이터 없음")
                         except Exception as e:

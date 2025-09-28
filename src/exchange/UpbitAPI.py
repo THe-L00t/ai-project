@@ -208,12 +208,21 @@ class UpbitAPI:
                 response = self.session.delete(url, json=params, headers=headers, timeout=10)
             else:
                 raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
-            
+
+            # 성공 상태 코드 확인 (200, 201, 204 모두 성공)
+            if response.status_code not in [200, 201, 204]:
+                error_content = response.text
+                self.logger.error(f"API 오류 응답 ({response.status_code}): {error_content}")
+            else:
+                self.logger.debug(f"API 성공 응답 ({response.status_code})")
+
             response.raise_for_status()
             return response.json()
-            
+
         except requests.exceptions.RequestException as e:
             self.logger.error(f"API 요청 실패: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                self.logger.error(f"응답 내용: {e.response.text}")
             raise
         except json.JSONDecodeError as e:
             self.logger.error(f"JSON 디코딩 실패: {e}")
@@ -309,6 +318,19 @@ class UpbitAPI:
             self.logger.error(f"캔들 데이터 조회 실패: {e}")
             return []
 
+    def GetMinuteCandles(self, market: str, count: int = 50) -> List[Dict]:
+        """
+        1분봉 캔들 데이터 조회 (편의 메서드)
+
+        Args:
+            market: 마켓 코드 (예: 'KRW-BTC')
+            count: 캔들 개수 (최대 200)
+
+        Returns:
+            1분봉 캔들 데이터 리스트
+        """
+        return self.GetCandles(market, 'minutes', 1, count)
+
     # ==========================================================================
     # 계정 정보 API
     # ==========================================================================
@@ -388,17 +410,22 @@ class UpbitAPI:
                 'side': side,
                 'ord_type': ord_type
             }
-            
+
             if volume is not None:
                 params['volume'] = str(volume)
             if price is not None:
                 params['price'] = str(price)
-            
+
             response = self._MakeRequest('POST', '/orders', params, auth_required=True)
-            
-            self.logger.info(f"주문 성공: {market} {side} {ord_type} {volume} {price}")
-            return response
-            
+
+            if response:
+                self.logger.info(f"주문 성공: {market} {side} {ord_type} {volume} {price}")
+                self.logger.info(f"주문 UUID: {response.get('uuid', 'N/A')}")
+                return response
+            else:
+                self.logger.error("주문 응답이 비어있음")
+                return None
+
         except Exception as e:
             self.logger.error(f"주문 실패: {e}")
             return None
