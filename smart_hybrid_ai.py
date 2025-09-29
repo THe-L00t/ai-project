@@ -435,9 +435,9 @@ class SmartHybridAI:
         self.positions = {}
         self.last_news_update = datetime.now() - timedelta(hours=1)
 
-        # API 캐싱 시스템 (5초 TTL)
+        # API 캐싱 시스템 (10초 TTL로 증가)
         self.api_cache = {}
-        self.cache_ttl = 5
+        self.cache_ttl = self.config.get('API_CACHE_TTL', 10)
 
     def get_position_entry_time(self, position):
         """포지션의 진입 시간을 안전하게 가져오기"""
@@ -596,8 +596,19 @@ class SmartHybridAI:
             logger.error(f"감정 데이터 업데이트 실패: {e}")
 
     def get_technical_analysis(self, market):
-        """기술적 지표 분석"""
+        """기술적 지표 분석 (캐시 최적화)"""
         try:
+            # 30분봉 캐시 키 (30분마다 갱신)
+            current_30min = int(time.time() / 1800)  # 1800초 = 30분
+            cache_key = f"{market}_technical_{current_30min}"
+
+            # 캐시 확인
+            if cache_key in self.api_cache:
+                cached_data = self.api_cache[cache_key]
+                if time.time() - cached_data['timestamp'] < 1800:  # 30분 캐시
+                    logger.debug(f"📋 기술적 분석 캐시 사용: {market}")
+                    return cached_data['data']
+
             # 30분봉 50개 가져오기 (충분한 데이터 확보)
             candles = self.upbit.GetCandles(market, 'minutes', unit=30, count=50)
 
@@ -627,13 +638,22 @@ class SmartHybridAI:
                 rsi, macd_data, bollinger_data, volume_data
             )
 
-            return {
+            result = {
                 'rsi': rsi,
                 'macd': macd_data,
                 'bollinger': bollinger_data,
                 'volume': volume_data,
                 'signal': technical_signal
             }
+
+            # 캐시에 저장 (30분 캐시)
+            self.api_cache[cache_key] = {
+                'data': result,
+                'timestamp': time.time()
+            }
+            logger.debug(f"🔄 기술적 분석 캐시 저장: {market}")
+
+            return result
 
         except Exception as e:
             logger.error(f"기술적 분석 실패 ({market}): {e}")
@@ -1355,8 +1375,8 @@ class SmartHybridAI:
                     self.save_learning_state()
                     last_save_time = datetime.now()
 
-                # 6. 대기 (단타 최적화 - 10초 간격)
-                cycle_interval = self.config.get('TRADING_CYCLE_SECONDS', 10)
+                # 6. 대기 (단타 최적화 - 15초 간격)
+                cycle_interval = self.config.get('TRADING_CYCLE_SECONDS', 15)
                 logger.info(f"⚡ {cycle_interval}초 대기 (단타 모드)...")
                 time.sleep(cycle_interval)
 

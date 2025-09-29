@@ -6,6 +6,7 @@ AI_SETTINGS.md 파일에서 설정을 읽어와 적용합니다.
 
 import os
 import re
+import yaml
 import logging
 
 logger = logging.getLogger(__name__)
@@ -21,18 +22,28 @@ class AIConfigLoader:
     def load_settings(self):
         """설정 파일 로드"""
         try:
-            if not os.path.exists(self.config_file):
-                logger.warning(f"설정 파일 없음: {self.config_file}, 기본값 사용")
+            # 1. AI_SETTINGS.md 로드
+            if os.path.exists(self.config_file):
+                with open(self.config_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                self.parse_settings(content)
+            else:
+                logger.warning(f"설정 파일 없음: {self.config_file}")
+
+            # 2. trading_config.yaml 로드 (새 설정 추가)
+            yaml_config_path = 'config/trading_config.yaml'
+            if os.path.exists(yaml_config_path):
+                with open(yaml_config_path, 'r', encoding='utf-8') as f:
+                    yaml_config = yaml.safe_load(f)
+                self.parse_yaml_settings(yaml_config)
+                logger.info("✅ trading_config.yaml 설정 추가 로드")
+
+            if not self.settings:
+                logger.warning("설정이 비어있음, 기본값 사용")
                 self.load_defaults()
                 return
 
-            with open(self.config_file, 'r', encoding='utf-8') as f:
-                content = f.read()
-
-            # 설정값 파싱
-            self.parse_settings(content)
             self.validate_settings()
-
             logger.info(f"✅ 설정 파일 로드 완료: {len(self.settings)}개 설정")
 
         except Exception as e:
@@ -84,6 +95,23 @@ class AIConfigLoader:
 
         # 문자열 값
         return value
+
+    def parse_yaml_settings(self, yaml_config):
+        """YAML 설정 파싱"""
+        try:
+            # ai_integration 섹션에서 설정 추출
+            ai_integration = yaml_config.get('ai_integration', {})
+
+            if 'trading_cycle_seconds' in ai_integration:
+                self.settings['TRADING_CYCLE_SECONDS'] = ai_integration['trading_cycle_seconds']
+
+            if 'api_cache_ttl' in ai_integration:
+                self.settings['API_CACHE_TTL'] = ai_integration['api_cache_ttl']
+
+            logger.info(f"YAML에서 추가된 설정: TRADING_CYCLE_SECONDS={ai_integration.get('trading_cycle_seconds')}, API_CACHE_TTL={ai_integration.get('api_cache_ttl')}")
+
+        except Exception as e:
+            logger.error(f"YAML 설정 파싱 실패: {e}")
 
     def validate_settings(self):
         """설정값 검증 (사용자 설정값을 그대로 사용)"""

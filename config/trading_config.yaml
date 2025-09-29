@@ -135,15 +135,19 @@ technical_indicators:
 ai_integration:
   # 예측 신룰도 최소 기준
   min_confidence: 0.7  # 70%
-  
+
   # 예측 기간
   prediction_horizon: 60  # 분 단위
-  
+
+  # 거래 사이클 설정 (15초 + 최적화)
+  trading_cycle_seconds: 15  # 15초 사이클
+  api_cache_ttl: 10  # API 캐시 TTL 10초로 증가
+
   # 뉴스 감정 가중치
   news_sentiment_weight: 0.3  # 30%
   technical_analysis_weight: 0.5  # 50%
   market_momentum_weight: 0.2  # 20%
-  
+
   # 신호 강도 기준
   signal_threshold:
     strong_buy: 0.8

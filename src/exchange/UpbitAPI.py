@@ -119,11 +119,13 @@ class UpbitAPI:
         self.ws_connection = None
         self.ws_callbacks = {}
         
-        # API 호출 제한 관리
+        # API 호출 제한 관리 (업비트 실제 제한 반영)
         self.last_request_time = 0
         self.request_count = 0
         self.rate_limit_window = 60  # 1분
-        self.max_requests_per_minute = 100
+        self.max_requests_per_minute = 30  # 업비트 공개 API 제한: 초당 10회, 분당 600회 -> 안전하게 30회로 설정
+        self.request_times = []  # 요청 시간 기록용
+        self.min_interval = 0.1  # 요청 간 최소 간격 (100ms)
         
         self.logger.info("업비트 API 클라이언트 초기화 완료")
 
@@ -153,80 +155,112 @@ class UpbitAPI:
         return jwt.encode(payload, self.secret_key, algorithm='HS256')
 
     def _CheckRateLimit(self):
-        """API 호출 제한 확인"""
+        """향상된 API 호출 제한 확인"""
         current_time = time.time()
-        
-        # 1분이 지났으면 카운터 리셋
-        if current_time - self.last_request_time > self.rate_limit_window:
-            self.request_count = 0
-            self.last_request_time = current_time
-        
+
+        # 최소 간격 보장
+        if self.last_request_time > 0:
+            elapsed = current_time - self.last_request_time
+            if elapsed < self.min_interval:
+                sleep_time = self.min_interval - elapsed
+                self.logger.debug(f"최소 간격 보장을 위해 {sleep_time:.3f}초 대기")
+                time.sleep(sleep_time)
+                current_time = time.time()
+
+        # 지난 1분간의 요청 기록 정리
+        cutoff_time = current_time - self.rate_limit_window
+        self.request_times = [t for t in self.request_times if t > cutoff_time]
+
         # 요청 제한 확인
-        if self.request_count >= self.max_requests_per_minute:
-            wait_time = self.rate_limit_window - (current_time - self.last_request_time)
+        if len(self.request_times) >= self.max_requests_per_minute:
+            oldest_request = min(self.request_times)
+            wait_time = self.rate_limit_window - (current_time - oldest_request) + 0.1  # 여유시간 추가
             if wait_time > 0:
                 self.logger.warning(f"API 요청 제한 도달. {wait_time:.1f}초 대기")
                 time.sleep(wait_time)
-                self.request_count = 0
-                self.last_request_time = time.time()
-        
-        self.request_count += 1
+                current_time = time.time()
+                # 대기 후 기록 다시 정리
+                cutoff_time = current_time - self.rate_limit_window
+                self.request_times = [t for t in self.request_times if t > cutoff_time]
 
-    def _MakeRequest(self, method: str, endpoint: str, params: Dict = None, 
-                    auth_required: bool = False) -> Dict:
+        # 현재 요청 시간 기록
+        self.request_times.append(current_time)
+        self.last_request_time = current_time
+
+    def _MakeRequest(self, method: str, endpoint: str, params: Dict = None,
+                    auth_required: bool = False, max_retries: int = 3) -> Dict:
         """
-        API 요청 실행
-        
+        API 요청 실행 (429 에러 재시도 로직 포함)
+
         Args:
             method: HTTP 메서드 (GET, POST, DELETE)
             endpoint: API 엔드포인트
             params: 요청 파라미터
             auth_required: 인증 필요 여부
-            
+            max_retries: 최대 재시도 횟수
+
         Returns:
             API 응답 데이터
         """
-        self._CheckRateLimit()
-        
-        url = f"{self.base_url}{endpoint}"
-        headers = self.session.headers.copy()
-        
-        # 인증이 필요한 경우 JWT 토큰 추가
-        if auth_required:
-            if not self.access_key or not self.secret_key:
-                raise ValueError("API 키가 설정되지 않았습니다")
-            
-            jwt_token = self._GenerateJWT(params)
-            headers['Authorization'] = f'Bearer {jwt_token}'
-        
-        try:
-            if method == 'GET':
-                response = self.session.get(url, params=params, headers=headers, timeout=10)
-            elif method == 'POST':
-                response = self.session.post(url, json=params, headers=headers, timeout=10)
-            elif method == 'DELETE':
-                response = self.session.delete(url, json=params, headers=headers, timeout=10)
-            else:
-                raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
+        for attempt in range(max_retries + 1):
+            try:
+                self._CheckRateLimit()
 
-            # 성공 상태 코드 확인 (200, 201, 204 모두 성공)
-            if response.status_code not in [200, 201, 204]:
-                error_content = response.text
-                self.logger.error(f"API 오류 응답 ({response.status_code}): {error_content}")
-            else:
-                self.logger.debug(f"API 성공 응답 ({response.status_code})")
+                url = f"{self.base_url}{endpoint}"
+                headers = self.session.headers.copy()
 
-            response.raise_for_status()
-            return response.json()
+                # 인증이 필요한 경우 JWT 토큰 추가
+                if auth_required:
+                    if not self.access_key or not self.secret_key:
+                        raise ValueError("API 키가 설정되지 않았습니다")
 
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"API 요청 실패: {e}")
-            if hasattr(e, 'response') and e.response is not None:
-                self.logger.error(f"응답 내용: {e.response.text}")
-            raise
-        except json.JSONDecodeError as e:
-            self.logger.error(f"JSON 디코딩 실패: {e}")
-            raise
+                    jwt_token = self._GenerateJWT(params)
+                    headers['Authorization'] = f'Bearer {jwt_token}'
+
+                if method == 'GET':
+                    response = self.session.get(url, params=params, headers=headers, timeout=10)
+                elif method == 'POST':
+                    response = self.session.post(url, json=params, headers=headers, timeout=10)
+                elif method == 'DELETE':
+                    response = self.session.delete(url, json=params, headers=headers, timeout=10)
+                else:
+                    raise ValueError(f"지원하지 않는 HTTP 메서드: {method}")
+
+                # 429 에러 처리
+                if response.status_code == 429:
+                    if attempt < max_retries:
+                        # 지수 백오프로 대기 시간 증가
+                        wait_time = (2 ** attempt) * 5  # 5초, 10초, 20초...
+                        self.logger.warning(f"429 에러 발생. {attempt + 1}/{max_retries + 1} 시도, {wait_time}초 후 재시도")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        error_content = response.text
+                        self.logger.error(f"최대 재시도 횟수 초과. API 오류 응답 (429): {error_content}")
+                        response.raise_for_status()
+
+                # 성공 상태 코드 확인 (200, 201, 204 모두 성공)
+                if response.status_code not in [200, 201, 204]:
+                    error_content = response.text
+                    self.logger.error(f"API 오류 응답 ({response.status_code}): {error_content}")
+                else:
+                    self.logger.debug(f"API 성공 응답 ({response.status_code})")
+
+                response.raise_for_status()
+                return response.json()
+
+            except requests.exceptions.RequestException as e:
+                # 429 에러가 아닌 다른 에러는 즉시 예외 발생
+                if hasattr(e, 'response') and e.response is not None:
+                    if e.response.status_code == 429 and attempt < max_retries:
+                        continue
+                    self.logger.error(f"응답 내용: {e.response.text}")
+
+                self.logger.error(f"API 요청 실패: {e}")
+                raise
+            except json.JSONDecodeError as e:
+                self.logger.error(f"JSON 디코딩 실패: {e}")
+                raise
 
     # ==========================================================================
     # 마켓 정보 API
@@ -286,17 +320,17 @@ class UpbitAPI:
             self.logger.error(f"현재 시세 조회 실패: {e}")
             return []
 
-    def GetCandles(self, market: str, period: str = 'minutes', 
+    def GetCandles(self, market: str, period: str = 'minutes',
                   unit: int = 1, count: int = 200) -> List[Dict]:
         """
-        캔들 차트 데이터 조회
-        
+        캔들 차트 데이터 조회 (안전한 요청 제한 적용)
+
         Args:
             market: 마켓 코드 (예: 'KRW-BTC')
             period: 캔들 기간 ('minutes', 'days', 'weeks', 'months')
             unit: 단위 (분봉: 1,3,5,15,10,30,60,240, 일봉: 1)
             count: 캔들 개수 (최대 200)
-            
+
         Returns:
             캔들 데이터 리스트
         """
@@ -305,17 +339,19 @@ class UpbitAPI:
                 endpoint = f'/candles/minutes/{unit}'
             else:
                 endpoint = f'/candles/{period}'
-            
+
             params = {
                 'market': market,
                 'count': min(count, 200)
             }
-            
-            response = self._MakeRequest('GET', endpoint, params)
+
+            self.logger.debug(f"캔들 데이터 요청: {market} {period}({unit}) count={count}")
+            response = self._MakeRequest('GET', endpoint, params, max_retries=2)
+            self.logger.debug(f"캔들 데이터 수신: {len(response)}개")
             return response
-            
+
         except Exception as e:
-            self.logger.error(f"캔들 데이터 조회 실패: {e}")
+            self.logger.error(f"캔들 데이터 조회 실패 ({market} {period}{unit}): {e}")
             return []
 
     def GetMinuteCandles(self, market: str, count: int = 50) -> List[Dict]:
